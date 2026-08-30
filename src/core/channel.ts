@@ -18,6 +18,13 @@ export type ChannelProfile = {
   systemPrompt: string;
   /** Herramientas habilitadas para el canal (subconjunto del registro de ai/tools). */
   toolNames: string[];
+  /**
+   * Razonamiento del modelo por turno. 'disabled' para chat de WhatsApp: en Sonnet 5 el thinking
+   * adaptativo viene activado por defecto y consume max_tokens (con un tope de 1024 truncaría
+   * respuestas). Se re-evalúa en Fase 6 junto al prompt pedagógico (con thinking off el modelo es
+   * menos propenso a usar tools → el prompt deberá empujar el tool-first explícitamente).
+   */
+  thinking: 'disabled' | 'adaptive';
 };
 
 /** Contexto de un turno, independiente del proveedor de mensajería. */
@@ -46,6 +53,7 @@ export const TUTOR_WHATSAPP_PROFILE: ChannelProfile = {
   maxResponseTokens: 1024,
   systemPrompt: TUTOR_SYSTEM_PROMPT,
   toolNames: [], // las tools del tutor se registran en Fases 3-7
+  thinking: 'disabled',
 };
 
 export function profileFor(id: ChannelId): ChannelProfile {

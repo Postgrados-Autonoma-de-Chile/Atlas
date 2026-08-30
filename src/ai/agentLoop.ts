@@ -3,6 +3,7 @@ import { tools } from './tools';
 import { executeTool } from './toolRunner';
 import { getHistory, setHistory } from './memory';
 import type { AgentContext, ChannelProfile } from '../core/channel';
+import { config } from '../config';
 import { inc, recordLlmLatency, recordTokens } from '../obs/metrics';
 import { audit } from '../obs/audit';
 import { log } from '../log';
@@ -68,13 +69,17 @@ export async function runConversation(
 
   for (let step = 0; step < MAX_STEPS; step++) {
     const t0 = Date.now();
+    // Sonnet 5: el thinking adaptativo viene ON por defecto y consume max_tokens; el perfil decide.
+    // El esfuerzo de razonamiento (output_config.effort) se controla por env (default 'low' para chat).
     const resp = await anthropic.messages.create({
       model: profile.model,
       max_tokens: profile.maxResponseTokens,
       system: cachedSystem(system),
       messages,
       tools: allowedTools as any,
-    });
+      ...(profile.thinking === 'disabled' ? { thinking: { type: 'disabled' as const } } : {}),
+      output_config: { effort: config.llmEffort },
+    } as any);
     recordLlmLatency(Date.now() - t0);
     recordTokens((resp as any).usage);
     inc('llm_calls');

@@ -1,35 +1,110 @@
 import 'dotenv/config';
+import { z } from 'zod';
 
-// Configuración central de ATLAS. Solo variables vigentes tras la Fase 1 (limpieza del bot de ventas).
-// La validación estricta de esquema (fail-fast al arrancar) llega en Fase 2.
-export const config = {
-  port: Number(process.env.PORT ?? 3000),
-  /** URL pública del servicio (Cloud Run o túnel local), sin slash final. */
-  baseUrl: (process.env.BASE_URL ?? '').replace(/\/$/, ''),
+// Configuración central de ATLAS, validada con zod al arrancar (Fase 2).
+// - Un valor MALFORMADO (número inválido, enum desconocido) detiene el proceso en cualquier entorno:
+//   se acabó el patrón heredado de "tragar el error y caer a un default silencioso".
+// - En PRODUCCIÓN además es fail-fast por AUSENCIA: los secretos obligatorios deben existir.
+
+const Env = z.object({
+  PORT: z.coerce.number().int().positive().default(3000),
+  BASE_URL: z.string().default(''),
+  NODE_ENV: z.string().default(''),
 
   // ── LLM (Anthropic) ──
-  anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? '',
-  /** Modelo del tutor (razonador). */
-  model: process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-6',
-  /** Modelo económico para clasificación/resúmenes (juez de evaluaciones, Fase 7). */
-  classifierModel: process.env.ANTHROPIC_CLASSIFIER ?? 'claude-haiku-4-5',
+  ANTHROPIC_API_KEY: z.string().default(''),
+  ANTHROPIC_MODEL: z.string().default('claude-sonnet-5'),
+  ANTHROPIC_CLASSIFIER: z.string().default('claude-haiku-4-5'),
+  /** Esfuerzo de razonamiento por turno. 'low' es el punto de partida para chat de WhatsApp
+   *  (latencia y costo); se re-evalúa con el harness pedagógico en Fase 6. */
+  ANTHROPIC_EFFORT: z.enum(['low', 'medium', 'high']).default('low'),
+  ANTHROPIC_TIMEOUT_MS: z.coerce.number().int().positive().default(45_000),
+  ANTHROPIC_MAX_RETRIES: z.coerce.number().int().min(0).default(2),
 
-  // ── STT para notas de voz de estudiantes (la fuente del audio pasa a la Media API de Meta en Fase 10) ──
-  deepgramApiKey: process.env.DEEPGRAM_API_KEY ?? '',
-  deepgramModel: process.env.DEEPGRAM_MODEL ?? 'nova-2',
+  // ── STT (notas de voz) ──
+  DEEPGRAM_API_KEY: z.string().default(''),
+  DEEPGRAM_MODEL: z.string().default('nova-2'),
 
   // ── Persistencia ──
-  redisUrl: process.env.REDIS_URL ?? '',
-  databaseUrl: process.env.DATABASE_URL ?? '',
-  pgSsl: process.env.PGSSL === 'true',
+  REDIS_URL: z.string().default(''),
+  DATABASE_URL: z.string().default(''),
+  PGSSL: z.enum(['true', 'false']).default('false'),
+  PGPOOL_MAX: z.coerce.number().int().positive().default(10),
 
-  // ── Webhook de WhatsApp Cloud API (handshake GET + firma X-Hub-Signature-256) ──
-  metaVerifyToken: process.env.META_VERIFY_TOKEN ?? '',
-  metaAppSecret: process.env.META_APP_SECRET ?? '',
+  // ── WhatsApp Cloud API (Meta) ──
+  META_VERIFY_TOKEN: z.string().default(''),
+  META_APP_SECRET: z.string().default(''),
+  /** 'meta' = Cloud API directo · '' = envío desactivado. 'bsp' llegará como implementación futura. */
+  WA_PROVIDER: z.enum(['meta', '']).default(''),
+  WA_CLOUD_PHONE_NUMBER_ID: z.string().default(''),
+  WA_CLOUD_TOKEN: z.string().default(''),
+  WA_GRAPH_VERSION: z.string().regex(/^v\d+\.\d+$/).default('v23.0'),
 
-  // ── Observabilidad ──
-  /** Protege /metrics. Solo por header (x-dashboard-token); nunca por query string. */
-  dashboardToken: process.env.DASHBOARD_TOKEN ?? '',
-  /** Retención de auditoría en días. En ATLAS la purga está ACTIVA por defecto (minimización de datos). */
-  auditRetentionDays: Number(process.env.AUDIT_RETENTION_DAYS ?? 90),
+  // ── Seguridad / observabilidad ──
+  DASHBOARD_TOKEN: z.string().default(''),
+  AUDIT_RETENTION_DAYS: z.coerce.number().int().min(0).default(90),
+
+  // ── Límites ──
+  RATE_LIMIT_MAX: z.coerce.number().int().positive().default(600),
+  RATE_LIMIT_STRICT: z.coerce.number().int().positive().default(240),
+  MAX_CONCURRENT_TURNS: z.coerce.number().int().positive().default(8),
+});
+
+const parsed = Env.safeParse(process.env);
+if (!parsed.success) {
+  const detalle = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(' · ');
+  throw new Error(`Configuración inválida — corrige las variables de entorno: ${detalle}`);
+}
+const env = parsed.data;
+const isProd = env.NODE_ENV === 'production';
+
+// Fail-fast por ausencia en producción (fail-closed: sin esto, los guards rechazarían en runtime,
+// pero es mejor no arrancar un servicio a medias).
+if (isProd) {
+  const obligatorias: Record<string, string> = {
+    ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY,
+    REDIS_URL: env.REDIS_URL,
+    DATABASE_URL: env.DATABASE_URL,
+    META_VERIFY_TOKEN: env.META_VERIFY_TOKEN,
+    META_APP_SECRET: env.META_APP_SECRET,
+    DASHBOARD_TOKEN: env.DASHBOARD_TOKEN,
+  };
+  const faltan = Object.entries(obligatorias).filter(([, v]) => !v).map(([k]) => k);
+  if (faltan.length) throw new Error(`Producción sin variables obligatorias: ${faltan.join(', ')}`);
+}
+
+export const config = {
+  isProd,
+  port: env.PORT,
+  /** URL pública del servicio (Cloud Run o túnel local), sin slash final. */
+  baseUrl: env.BASE_URL.replace(/\/$/, ''),
+
+  anthropicApiKey: env.ANTHROPIC_API_KEY,
+  model: env.ANTHROPIC_MODEL,
+  classifierModel: env.ANTHROPIC_CLASSIFIER,
+  llmEffort: env.ANTHROPIC_EFFORT,
+  anthropicTimeoutMs: env.ANTHROPIC_TIMEOUT_MS,
+  anthropicMaxRetries: env.ANTHROPIC_MAX_RETRIES,
+
+  deepgramApiKey: env.DEEPGRAM_API_KEY,
+  deepgramModel: env.DEEPGRAM_MODEL,
+
+  redisUrl: env.REDIS_URL,
+  databaseUrl: env.DATABASE_URL,
+  pgSsl: env.PGSSL === 'true',
+  pgPoolMax: env.PGPOOL_MAX,
+
+  metaVerifyToken: env.META_VERIFY_TOKEN,
+  metaAppSecret: env.META_APP_SECRET,
+  waProvider: env.WA_PROVIDER,
+  waCloudPhoneNumberId: env.WA_CLOUD_PHONE_NUMBER_ID,
+  waCloudToken: env.WA_CLOUD_TOKEN,
+  waGraphVersion: env.WA_GRAPH_VERSION,
+
+  dashboardToken: env.DASHBOARD_TOKEN,
+  auditRetentionDays: env.AUDIT_RETENTION_DAYS,
+
+  rateLimitMax: env.RATE_LIMIT_MAX,
+  rateLimitStrict: env.RATE_LIMIT_STRICT,
+  maxConcurrentTurns: env.MAX_CONCURRENT_TURNS,
 };

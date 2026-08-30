@@ -32,8 +32,8 @@ app.use((req, res, next) => {
 
 // Rate limiting (por IP, distribuido vía Redis): global + estricto para el webhook.
 const RL_WINDOW = 60_000;
-const globalLimiter = rateLimit({ name: 'global', windowMs: RL_WINDOW, max: Number(process.env.RATE_LIMIT_MAX ?? 600) });
-const strictLimiter = rateLimit({ name: 'strict', windowMs: RL_WINDOW, max: Number(process.env.RATE_LIMIT_STRICT ?? 240) });
+const globalLimiter = rateLimit({ name: 'global', windowMs: RL_WINDOW, max: config.rateLimitMax });
+const strictLimiter = rateLimit({ name: 'strict', windowMs: RL_WINDOW, max: config.rateLimitStrict });
 app.use(globalLimiter);
 
 app.get('/', (_req, res) =>

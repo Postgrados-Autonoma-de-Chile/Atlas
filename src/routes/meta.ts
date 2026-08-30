@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { config } from '../config';
 import { log } from '../log';
 import { safeEqual } from '../util/crypto';
+import { normalizarEntrante } from '../messaging';
 
 // Webhook de WhatsApp Cloud API (Meta). En Fase 1 solo existen las piezas comunes de Meta —
 // heredadas y probadas del canal IG/Messenger anterior, idénticas para WhatsApp Cloud API:
@@ -45,15 +46,15 @@ export function verifyMetaSignature(req: Request, res: Response, next: NextFunct
   next();
 }
 
-/** POST /webhooks/whatsapp — placeholder de Fase 1: ACK inmediato y registro del tipo de evento.
- *  En Fase 10 este handler publica el turno a Pub/Sub (con dedupe por wa_message_id). */
+/** POST /webhooks/whatsapp — placeholder: ACK inmediato y registro del evento ya NORMALIZADO por la
+ *  capa de mensajería (Fase 2). En Fase 10 este handler publica los turnos a Pub/Sub (con dedupe
+ *  por wa_message_id) y los statuses actualizan recordatorios/mensajes. */
 export function metaWebhook(req: Request, res: Response) {
   res.sendStatus(200);
-  const body: any = req.body ?? {};
-  const value = body?.entry?.[0]?.changes?.[0]?.value;
-  log.info('webhook whatsapp recibido (canal en construcción, Fase 10)', {
-    object: body?.object,
-    messages: Array.isArray(value?.messages) ? value.messages.length : 0,
-    statuses: Array.isArray(value?.statuses) ? value.statuses.length : 0,
+  const evento = normalizarEntrante(req.body ?? {});
+  log.info('webhook whatsapp recibido (procesamiento llega en Fase 10)', {
+    messages: evento.messages.length,
+    statuses: evento.statuses.length,
+    tipos: evento.messages.map((m) => m.type),
   });
 }
