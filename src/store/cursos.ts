@@ -147,7 +147,7 @@ export async function entregarLeccionActual(personId: string): Promise<{ leccion
 }
 
 export type ResultadoCompletar = {
-  completada: { orden: number; titulo: string };
+  completada: { id: string; orden: number; titulo: string };
   minutosAcumulados: number;
   cursoCompletado: boolean;
   siguiente?: { orden: number; titulo: string };
@@ -210,7 +210,7 @@ export async function completarLeccionActual(personId: string): Promise<Resultad
     }
     await client.query('COMMIT');
     return {
-      completada: { orden: actual.orden, titulo: actual.titulo },
+      completada: { id: actual.id, orden: actual.orden, titulo: actual.titulo },
       minutosAcumulados: upd.rows[0].minutos_acumulados,
       cursoCompletado,
       siguiente: siguiente ? { orden: siguiente.orden, titulo: siguiente.titulo } : undefined,

@@ -69,6 +69,9 @@ function textoDe(msg: InboundMessage): string {
   return '';
 }
 
+/** Minúsculas sin acentos para los matchers: el \b de JS es ASCII ("sí\b" fallaría). */
+const plano = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+
 /**
  * Punto de entrada del flujo. Devuelve handled=true si el asistente consumió el mensaje.
  * Sin BD (dev sin DATABASE_URL) el registro se omite y el tutor responde normalmente.
@@ -103,13 +106,13 @@ export async function manejarRegistro(msg: InboundMessage, provider: MessagingPr
 
   switch (estado.etapa) {
     case 'consentimiento': {
-      if (replyId === 'reg_si' || /^(si|sí|acepto|dale|ok)\b/i.test(texto)) {
+      if (replyId === 'reg_si' || /^(si+|acepto|dale|ok)\b/.test(plano(texto))) {
         await setEstado(msg.from, { etapa: 'nombre', intentos: 0 });
         await provider.enviarTexto(msg.from, T.nombre);
         void audit({ type: 'registro_consentimiento', dialogId: msg.from, detail: { version: CONSENT_VERSION } });
         return { handled: true };
       }
-      if (replyId === 'reg_no' || /^(no|ahora no|despu[eé]s)\b/i.test(texto)) {
+      if (replyId === 'reg_no' || /^(no+|ahora no|despues)\b/.test(plano(texto))) {
         await setEstado(msg.from, { etapa: 'rechazado', intentos: 0 });
         await provider.enviarTexto(msg.from, T.rechazo);
         void audit({ type: 'registro_rechazado', dialogId: msg.from });
@@ -156,7 +159,7 @@ export async function manejarRegistro(msg: InboundMessage, provider: MessagingPr
       });
 
     case 'confirma_email': {
-      if (replyId === 'email_ok' || /^(si|sí|correcto)\b/i.test(texto)) {
+      if (replyId === 'email_ok' || /^(si+|correcto)\b/.test(plano(texto))) {
         const { nombre, apellido, emailCandidato } = estado;
         if (!nombre || !apellido || !emailCandidato) {
           // Estado corrupto (no debería pasar): reiniciar limpio.

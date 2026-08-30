@@ -15,6 +15,7 @@ import { getRequestContext, runWithRequestContext } from '../obs/requestContext'
 import { messagingProvider, normalizarEntrante } from '../messaging';
 import type { InboundMessage, MessagingProvider } from '../messaging';
 import { manejarRegistro } from '../flows/registro';
+import { manejarEvaluacion } from '../flows/evaluacion';
 import { contextoAcademico } from '../store/cursos';
 
 // Canal WhatsApp Cloud API (Fase 10a): webhook → normalización → dedupe → lock por conversación →
@@ -149,6 +150,11 @@ export async function procesarMensajeEntrante(msg: InboundMessage, provider: Mes
   const registro = await manejarRegistro(msg, provider);
   if (registro.handled) return;
   const persona = registro.persona ?? null;
+
+  // Evaluaciones formativas (F7): interceptor determinista de respuestas de quiz (botones/listas o
+  // texto A-D/V-F) ANTES del motor — el parsing y el registro académico jamás se delegan al LLM.
+  const evaluacion = await manejarEvaluacion(msg, persona, provider);
+  if (evaluacion.handled) return;
 
   const t0 = Date.now();
   const contenido = await contenidoDelTurno(msg, provider);

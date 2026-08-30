@@ -1,6 +1,8 @@
 import type { AgentContext } from '../core/channel';
 import { buscarPersonaPorWaId } from '../store/personas';
 import { inscribir, estadoAcademico, entregarLeccionActual, completarLeccionActual, cursoActivo } from '../store/cursos';
+import { quizDeLeccion } from '../store/evaluaciones';
+import { marcarOfertaQuiz } from '../flows/evaluacion';
 import { buscarContenidoCurso } from '../rag/retrieval';
 import { audit } from '../obs/audit';
 import { log } from '../log';
@@ -79,12 +81,19 @@ export async function executeTool(name: string, _input: unknown, ctx?: AgentCont
           dialogId: ctx?.conversationId,
           detail: { orden: r.completada.orden, minutos: r.minutosAcumulados, finCurso: r.cursoCompletado },
         });
+        // ¿La microcápsula completada tiene mini-quiz? Deja la oferta lista para que el flujo
+        // determinista la inicie apenas el estudiante acepte (F7).
+        const quiz = await quizDeLeccion(r.completada.id);
+        if (quiz && ctx?.conversationId) await marcarOfertaQuiz(ctx.conversationId);
         return {
           ok: true,
-          completada: r.completada,
+          completada: { orden: r.completada.orden, titulo: r.completada.titulo },
           minutosAcumulados: r.minutosAcumulados,
           cursoCompletado: r.cursoCompletado,
           siguiente: r.siguiente ?? null,
+          ...(quiz
+            ? { quizDisponible: true, instruccionQuiz: 'Ofrece el mini-quiz de práctica de esta microcápsula (sin nota): dile que responda "sí" o escriba "quiz" cuando quiera. NO formules tú las preguntas: el sistema conduce el quiz automáticamente.' }
+            : {}),
           ...(r.cursoCompletado
             ? { mensaje: 'Felicita al estudiante: terminó todas las microcápsulas. La certificación se habilitará pronto (no prometas fechas).' }
             : {}),
