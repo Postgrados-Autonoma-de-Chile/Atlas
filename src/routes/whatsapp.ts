@@ -15,6 +15,7 @@ import { getRequestContext, runWithRequestContext } from '../obs/requestContext'
 import { messagingProvider, normalizarEntrante } from '../messaging';
 import type { InboundMessage, MessagingProvider } from '../messaging';
 import { manejarRegistro } from '../flows/registro';
+import { contextoAcademico } from '../store/cursos';
 
 // Canal WhatsApp Cloud API (Fase 10a): webhook → normalización → dedupe → lock por conversación →
 // motor del tutor → respuesta por el MessagingProvider.
@@ -153,10 +154,11 @@ export async function procesarMensajeEntrante(msg: InboundMessage, provider: Mes
   const contenido = await contenidoDelTurno(msg, provider);
   if (!contenido) return log.info('whatsapp: mensaje sin contenido procesable (ignorado)', { tipo: msg.type });
 
-  // Contexto de identidad para el motor (solo se inyecta al abrir conversación; ver agentLoop).
-  // La rehidratación académica completa (curso, progreso) llega en F4.
-  const priorContext = persona?.nombre
-    ? `Estudiante registrado: ${persona.nombre} ${persona.apellido ?? ''}`.trim() + '.'
+  // Rehidratación académica (F4): al abrir conversación, el tutor recibe desde Postgres quién es el
+  // estudiante y dónde quedó (curso, avance, próxima microcápsula) — nunca desde el historial del LLM.
+  // Solo se inyecta si la memoria conversacional está vacía (ver agentLoop/priorContextMessage).
+  const priorContext = persona
+    ? await contextoAcademico(persona.id, [persona.nombre, persona.apellido].filter(Boolean).join(' ') || null)
     : '';
 
   const reply = await runAgentTurn(
