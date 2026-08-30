@@ -48,6 +48,10 @@ const Env = z.object({
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(600),
   RATE_LIMIT_STRICT: z.coerce.number().int().positive().default(240),
   MAX_CONCURRENT_TURNS: z.coerce.number().int().positive().default(8),
+
+  // ── Memoria conversacional (la académica vive en Postgres, F3-4) ──
+  MEMORY_TTL_HOURS: z.coerce.number().int().positive().default(48),
+  MEMORY_MAX_TURNS: z.coerce.number().int().positive().default(24),
 });
 
 const parsed = Env.safeParse(process.env);
@@ -107,4 +111,7 @@ export const config = {
   rateLimitMax: env.RATE_LIMIT_MAX,
   rateLimitStrict: env.RATE_LIMIT_STRICT,
   maxConcurrentTurns: env.MAX_CONCURRENT_TURNS,
+
+  memoryTtlHours: env.MEMORY_TTL_HOURS,
+  memoryMaxTurns: env.MEMORY_MAX_TURNS,
 };

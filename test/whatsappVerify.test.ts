@@ -11,7 +11,7 @@ process.env.NODE_ENV = 'test';
 process.env.META_VERIFY_TOKEN = 'verify-test-token';
 process.env.META_APP_SECRET = 'app-secret-test';
 
-const { metaVerify, verifyMetaSignature } = await import('../src/routes/meta');
+const { metaVerify, verifyMetaSignature } = await import('../src/routes/whatsapp');
 
 function fakeRes() {
   const res: any = { statusCode: 200, body: undefined };

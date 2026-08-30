@@ -177,6 +177,10 @@ export class MetaCloudProvider implements MessagingProvider {
     return this.post(payloadDocumento(to, urlOMediaId, filename, caption));
   }
 
+  marcarLeido(waMessageId: string) {
+    return this.post({ messaging_product: 'whatsapp', status: 'read', message_id: waMessageId });
+  }
+
   /** Descarga en dos pasos de la Media API: GET /{media-id} → URL efímera → GET con Bearer. */
   async descargarMedia(mediaId: string): Promise<{ base64: string; mediaType: string } | null> {
     if (!this.configurado()) return null;

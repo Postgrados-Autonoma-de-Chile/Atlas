@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { config } from './config';
 import { log } from './log';
 import { runWithRequestContext } from './obs/requestContext';
-import { metaVerify, verifyMetaSignature, metaWebhook } from './routes/meta';
+import { metaVerify, verifyMetaSignature, metaWebhook } from './routes/whatsapp';
 import { initDb, startRetentionSweep, dbEnabled } from './store/db';
 import { snapshot } from './obs/metrics';
 import { kvKind } from './store/kv';

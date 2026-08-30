@@ -67,4 +67,7 @@ export interface MessagingProvider {
 
   /** Descarga un media entrante (audio/imagen/documento) → base64 + mime, o null si falla. */
   descargarMedia(mediaId: string): Promise<{ base64: string; mediaType: string } | null>;
+
+  /** Marca un mensaje entrante como leído (check azul). Best-effort: nunca lanza. */
+  marcarLeido(waMessageId: string): Promise<SendResult>;
 }
