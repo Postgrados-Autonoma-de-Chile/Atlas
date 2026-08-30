@@ -1,24 +1,21 @@
 {
-  "name": "poc-agente-bitrix24",
-  "version": "0.1.0",
+  "name": "atlas",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "PoC F1 — Bot de Open Lines (imbot TYPE=O) sobre ChatApp + smoke tests Bitrix/Anthropic",
+  "description": "ATLAS — tutor educativo de IA por WhatsApp (Universidad Autónoma de Chile)",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "smoke:anthropic": "tsx scripts/smoke-anthropic.ts",
-    "smoke:bitrix": "tsx scripts/smoke-bitrix.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-test-module-mocks --import tsx --test \"test/*.test.ts\""
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.40.0",
-    "bottleneck": "^2.19.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "ioredis": "^5.4.2",
-    "pdf-lib": "^1.17.1",
     "pg": "^8.13.1",
     "tsx": "^4.19.2"
   },
@@ -29,6 +26,6 @@
     "typescript": "^5.7.2"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   }
 }
