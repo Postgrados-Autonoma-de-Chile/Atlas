@@ -52,7 +52,7 @@ export const TUTOR_WHATSAPP_PROFILE: ChannelProfile = {
   model: config.model,
   maxResponseTokens: 1024,
   systemPrompt: TUTOR_SYSTEM_PROMPT,
-  toolNames: [], // las tools del tutor se registran en Fases 3-7
+  toolNames: ['consultar_mis_datos'], // F4-F7 agregan lecciones, progreso, RAG y evaluaciones
   thinking: 'disabled',
 };
 

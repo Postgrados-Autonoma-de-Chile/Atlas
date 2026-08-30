@@ -4,12 +4,16 @@ import { log } from '../log';
 import { once } from './kv';
 import { inc } from '../obs/metrics';
 
-// Auditoría persistente en Postgres. En Fase 1 esta capa queda reducida a audit_log + retención;
-// el esquema académico de ATLAS (person, course, enrollment, quiz_attempt, ...) llega en las
-// Fases 3-4 con un framework de migraciones versionadas (el DDL inline de abajo desaparece entonces)
-// y con política fail-fast: cuando Postgres sea la fuente de verdad del progreso, un fallo de BD
-// debe detener el arranque, no degradar en silencio.
+// Postgres: desde la Fase 3 es la FUENTE DE VERDAD de identidad (y pronto de progreso académico).
+// El esquema vive en migrations/ (npm run migrate) — ya no hay DDL inline. Política fail-fast:
+// en producción, si la BD no está disponible o el esquema no está migrado, el proceso NO arranca.
+// En desarrollo sin DATABASE_URL se degrada con aviso (registro/identidad quedan inactivos).
 let pool: pg.Pool | null = null;
+
+/** Pool para los repositorios (personas, cursos...). null si no hay BD (solo dev). */
+export function getPool(): pg.Pool | null {
+  return pool;
+}
 
 export type AuditEntry = {
   type: string;
@@ -21,7 +25,8 @@ export type AuditEntry = {
 
 export async function initDb(): Promise<void> {
   if (!config.databaseUrl) {
-    log.info('DB: sin DATABASE_URL → auditoría solo en logs');
+    // En producción esto ya es inalcanzable (config zod exige DATABASE_URL); solo dev.
+    log.warn('DB: sin DATABASE_URL → identidad/registro inactivos y auditoría solo en logs (solo dev)');
     return;
   }
   try {
@@ -29,27 +34,21 @@ export async function initDb(): Promise<void> {
       connectionString: config.databaseUrl,
       // TODO(F11): reemplazar por Cloud SQL connector / CA verificada (no aceptar cualquier cert).
       ssl: config.pgSsl ? { rejectUnauthorized: false } : undefined,
-      max: Number(process.env.PGPOOL_MAX ?? 10),
+      max: config.pgPoolMax,
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 5_000,
     });
     // Un cliente idle cerrado por el servidor (reinicio/failover de PG) NO debe tumbar el proceso.
     pool.on('error', (err) => log.warn('pg pool: error en cliente idle', { err: String(err) }));
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS audit_log (
-        id BIGSERIAL PRIMARY KEY,
-        ts TIMESTAMPTZ NOT NULL DEFAULT now(),
-        type TEXT NOT NULL,
-        dialog_id TEXT,
-        detail JSONB
-      );
-    `);
-    await pool.query(`CREATE INDEX IF NOT EXISTS audit_log_ts_idx ON audit_log (ts DESC);`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS audit_log_type_ts_idx ON audit_log (type, ts DESC);`);
-    log.info('DB: Postgres conectado, tabla audit_log lista');
+    // Sanity check del esquema: las tablas nacen en migrations/, no aquí.
+    await pool.query(`SELECT 1 FROM audit_log LIMIT 0`);
+    await pool.query(`SELECT 1 FROM person LIMIT 0`);
+    log.info('DB: Postgres conectado y esquema migrado');
   } catch (e) {
-    log.error('DB: init falló, auditoría solo en logs', { err: String(e) });
     pool = null;
+    const msg = `DB: conexión o esquema no disponible — ¿corriste "npm run migrate"? (${String(e)})`;
+    if (config.isProd) throw new Error(msg); // fail-fast: sin fuente de verdad no se arranca
+    log.error(msg + ' — continuando en modo dev sin BD');
   }
 }
 

@@ -58,10 +58,14 @@ app.get('/metrics', requireDashboardToken, async (_req, res) => {
 app.get('/webhooks/whatsapp', metaVerify);
 app.post('/webhooks/whatsapp', strictLimiter, verifyMetaSignature, metaWebhook);
 
-// Inicializa Postgres (auditoría) y el barrido de retención.
+// Inicializa Postgres y el barrido de retención. Fail-fast en producción: sin la fuente de
+// verdad (identidad, progreso) el servicio no debe atender tráfico.
 initDb()
   .then(() => startRetentionSweep())
-  .catch((e) => log.error('initDb error', { err: String(e) }));
+  .catch((e) => {
+    log.error('initDb error', { err: String(e) });
+    if (config.isProd) process.exit(1);
+  });
 
 app.listen(config.port, () =>
   log.info('ATLAS escuchando', { port: config.port, baseUrl: config.baseUrl || '(define BASE_URL)' }),

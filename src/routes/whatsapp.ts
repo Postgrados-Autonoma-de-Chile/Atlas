@@ -14,6 +14,7 @@ import { TUTOR_WHATSAPP_PROFILE } from '../core/channel';
 import { getRequestContext, runWithRequestContext } from '../obs/requestContext';
 import { messagingProvider, normalizarEntrante } from '../messaging';
 import type { InboundMessage, MessagingProvider } from '../messaging';
+import { manejarRegistro } from '../flows/registro';
 
 // Canal WhatsApp Cloud API (Fase 10a): webhook → normalización → dedupe → lock por conversación →
 // motor del tutor → respuesta por el MessagingProvider.
@@ -142,16 +143,26 @@ export async function procesarMensajeEntrante(msg: InboundMessage, provider: Mes
   // Marcar como leído (check azul) — mejora la experiencia; no crítico.
   void provider.marcarLeido(msg.waMessageId).catch(() => {});
 
+  // Registro de identidad (F3): asistente determinista para usuarios sin Persona. Si consume el
+  // mensaje (pregunta/valida/persiste), el motor no corre. Sin BD (dev) se omite limpiamente.
+  const registro = await manejarRegistro(msg, provider);
+  if (registro.handled) return;
+  const persona = registro.persona ?? null;
+
   const t0 = Date.now();
   const contenido = await contenidoDelTurno(msg, provider);
   if (!contenido) return log.info('whatsapp: mensaje sin contenido procesable (ignorado)', { tipo: msg.type });
 
-  const esNueva = false; // el conteo fino de conversaciones nuevas llega con identidad (F3)
-  void esNueva;
+  // Contexto de identidad para el motor (solo se inyecta al abrir conversación; ver agentLoop).
+  // La rehidratación académica completa (curso, progreso) llega en F4.
+  const priorContext = persona?.nombre
+    ? `Estudiante registrado: ${persona.nombre} ${persona.apellido ?? ''}`.trim() + '.'
+    : '';
 
   const reply = await runAgentTurn(
-    { profile: TUTOR_WHATSAPP_PROFILE, conversationId: msg.from },
+    { profile: TUTOR_WHATSAPP_PROFILE, conversationId: msg.from, personId: persona?.id },
     contenido,
+    priorContext,
   );
 
   const enviado = await provider.enviarTexto(msg.from, reply);
