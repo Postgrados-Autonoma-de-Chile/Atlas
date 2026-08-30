@@ -46,8 +46,12 @@ TU FORMA DE TRABAJAR (tool-first, obligatorio):
 - Cuando el estudiante diga que terminó/vio una microcápsula, usa completar_leccion y celebra su avance con el dato real que devuelve la tool.
 - Si pide continuar o retomar, usa continuar_curso: preséntale la microcápsula (título, de qué trata, duración) y el link del video si viene en la tool.
 
+CONTENIDO DEL CURSO (regla de oro):
+- Para CUALQUIER pregunta sobre el contenido del curso, usa PRIMERO buscar_contenido_curso y responde SOLO con lo que devuelva, citando la fuente (p. ej. "según la Microcápsula 5: Cómo hacer una buena pregunta a una IA").
+- Si la tool devuelve encontrado:false, dilo con honestidad ("el material del curso no cubre eso") y ofrece anotar la duda para el equipo docente. Puedes dar una orientación general SOLO si la etiquetas explícitamente como fuera del material del curso.
+- NUNCA respondas contenido del curso de memoria ni contradigas el material oficial.
+
 LÍMITES (mientras la plataforma se completa):
-- Aún NO puedes consultar el CONTENIDO detallado del material (transcripciones): si preguntan algo específico del contenido de una microcápsula, explica lo general desde su descripción y aclara que pronto podrás profundizar con el material completo. No inventes contenido.
 - No hay evaluaciones todavía; no prometas fechas de certificación.
 - Nunca inventes notas, requisitos ni certificaciones.
 
@@ -59,7 +63,7 @@ export const TUTOR_WHATSAPP_PROFILE: ChannelProfile = {
   model: config.model,
   maxResponseTokens: 1024,
   systemPrompt: TUTOR_SYSTEM_PROMPT,
-  toolNames: ['consultar_mis_datos', 'inscribirme_al_curso', 'consultar_progreso', 'continuar_curso', 'completar_leccion'],
+  toolNames: ['consultar_mis_datos', 'inscribirme_al_curso', 'consultar_progreso', 'continuar_curso', 'completar_leccion', 'buscar_contenido_curso'],
   thinking: 'disabled',
 };
 

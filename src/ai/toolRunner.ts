@@ -1,6 +1,7 @@
 import type { AgentContext } from '../core/channel';
 import { buscarPersonaPorWaId } from '../store/personas';
-import { inscribir, estadoAcademico, entregarLeccionActual, completarLeccionActual } from '../store/cursos';
+import { inscribir, estadoAcademico, entregarLeccionActual, completarLeccionActual, cursoActivo } from '../store/cursos';
+import { buscarContenidoCurso } from '../rag/retrieval';
 import { audit } from '../obs/audit';
 import { log } from '../log';
 
@@ -87,6 +88,34 @@ export async function executeTool(name: string, _input: unknown, ctx?: AgentCont
           ...(r.cursoCompletado
             ? { mensaje: 'Felicita al estudiante: terminó todas las microcápsulas. La certificación se habilitará pronto (no prometas fechas).' }
             : {}),
+        };
+      }
+
+      case 'buscar_contenido_curso': {
+        const consulta = String((_input as any)?.consulta ?? '').trim();
+        if (consulta.length < 3) return { ok: false, error: 'consulta_invalida' };
+        // Curso del estudiante si está inscrito; si no, el curso activo (las preguntas de contenido
+        // no exigen inscripción durante el piloto).
+        const estado = ctx?.personId ? await estadoAcademico(ctx.personId) : null;
+        const cursoId = estado?.curso?.id ?? (await cursoActivo())?.id;
+        if (!cursoId) return { ok: false, error: 'sin_curso_activo' };
+        const r = await buscarContenidoCurso(cursoId, consulta);
+        void audit({ type: 'rag_busqueda', dialogId: ctx?.conversationId, detail: { encontrado: r.encontrado, disponible: r.disponible, n: r.resultados.length } });
+        if (!r.disponible) {
+          return { ok: false, error: 'rag_no_disponible', mensaje: 'El buscador de material no está operativo ahora; discúlpate brevemente y ofrece intentar más tarde.' };
+        }
+        if (!r.encontrado) {
+          return {
+            ok: true,
+            encontrado: false,
+            mensaje: 'El material del curso NO cubre esta pregunta. Dilo honestamente, ofrece anotar la duda para el equipo docente, y si entregas una orientación general etiquétala explícitamente como fuera del material del curso.',
+          };
+        }
+        return {
+          ok: true,
+          encontrado: true,
+          instruccion: 'Responde SOLO con base en estos fragmentos y cita la fuente (p. ej. "según la Microcápsula 5").',
+          fragmentos: r.resultados.map((f) => ({ fuente: f.fuente, texto: f.texto })),
         };
       }
 

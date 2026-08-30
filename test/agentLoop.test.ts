@@ -43,7 +43,7 @@ test('runAgentTurn: un tool_use se ejecuta y su resultado se realimenta al model
   impl = async (args: any) => {
     seen.push(args);
     step++;
-    if (step === 1) return toolResp('tu1', 'buscar_contenido_curso', { texto: 'fotosíntesis' });
+    if (step === 1) return toolResp('tu1', 'tool_de_prueba_inexistente', { texto: 'fotosíntesis' });
     return textResp('Ese contenido aún no está cargado en la plataforma.');
   };
   const reply = await runAgentTurn({ ...ctx(), conversationId: 'al-tool' }, '¿qué es la fotosíntesis?');

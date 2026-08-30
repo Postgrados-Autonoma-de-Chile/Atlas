@@ -52,6 +52,15 @@ const Env = z.object({
   // ── Memoria conversacional (la académica vive en Postgres, F3-4) ──
   MEMORY_TTL_HOURS: z.coerce.number().int().positive().default(48),
   MEMORY_MAX_TURNS: z.coerce.number().int().positive().default(24),
+
+  // ── RAG (F5): embeddings Gemini + pgvector ──
+  GEMINI_API_KEY: z.string().default(''),
+  EMBEDDING_MODEL: z.string().default('gemini-embedding-001'),
+  /** Dimensiones Matryoshka del embedding; debe calzar con vector(N) de la migración 0005. */
+  EMBEDDING_DIM: z.coerce.number().int().positive().default(768),
+  /** Similitud coseno mínima para considerar un chunk relevante (bajo esto → "no está en el material"). */
+  RAG_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.55),
+  RAG_TOP_K: z.coerce.number().int().positive().max(20).default(6),
 });
 
 const parsed = Env.safeParse(process.env);
@@ -114,4 +123,10 @@ export const config = {
 
   memoryTtlHours: env.MEMORY_TTL_HOURS,
   memoryMaxTurns: env.MEMORY_MAX_TURNS,
+
+  geminiApiKey: env.GEMINI_API_KEY,
+  embeddingModel: env.EMBEDDING_MODEL,
+  embeddingDim: env.EMBEDDING_DIM,
+  ragMinScore: env.RAG_MIN_SCORE,
+  ragTopK: env.RAG_TOP_K,
 };
