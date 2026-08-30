@@ -13,7 +13,8 @@
     "migrate:down": "node-pg-migrate -m migrations down",
     "smoke:anthropic": "tsx scripts/smoke-anthropic.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-test-module-mocks --import tsx --test \"test/*.test.ts\""
+    "test": "node --experimental-test-module-mocks --import tsx --test \"test/*.test.ts\"",
+    "eval:tutor": "tsx scripts/evaluar-tutor.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",
