@@ -1,0 +1,48 @@
+# Deploy a Cloud Run con GATE de CI (Fase 11): nada se despliega si typecheck o tests fallan —
+# cierra el hallazgo de la auditoría (Railway auto-desplegaba aunque el CI estuviera en rojo).
+# Requiere en Settings → Variables: GCP_PROJECT_ID, GCP_REGION, GCP_WIF_PROVIDER, GCP_DEPLOY_SA.
+# Sin GCP_PROJECT_ID configurada, el workflow se salta el deploy (repos fork / pre-GCP).
+name: deploy
+on:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+  id-token: write # Workload Identity Federation: sin llaves JSON exportadas (F12)
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+        env: { NODE_ENV: test }
+      - run: npm run build
+
+  deploy:
+    needs: gate
+    if: vars.GCP_PROJECT_ID != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Build y push de la imagen
+        run: |
+          IMG="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/atlas/atlas:${{ github.sha }}"
+          gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
+          docker build -t "$IMG" .
+          docker push "$IMG"
+          echo "IMG=$IMG" >> "$GITHUB_ENV"
+      - name: Deploy webhook y worker (misma imagen, roles por config)
+        run: |
+          gcloud run deploy atlas-webhook --image "$IMG" --region ${{ vars.GCP_REGION }} --quiet
+          gcloud run deploy atlas-worker  --image "$IMG" --region ${{ vars.GCP_REGION }} --quiet

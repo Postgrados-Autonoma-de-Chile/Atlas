@@ -20,6 +20,7 @@
     "@anthropic-ai/sdk": "^0.122.0",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "google-auth-library": "^9.15.1",
     "ioredis": "^5.4.2",
     "nodemailer": "^6.10.1",
     "pdf-lib": "^1.17.1",

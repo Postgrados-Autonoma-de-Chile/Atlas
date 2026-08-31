@@ -13,6 +13,7 @@ import { transcribeAudio } from '../ai/transcribe';
 import { TUTOR_WHATSAPP_PROFILE } from '../core/channel';
 import { getRequestContext, runWithRequestContext } from '../obs/requestContext';
 import { messagingProvider, normalizarEntrante } from '../messaging';
+import { pubsubHabilitado, publicarTurno } from '../messaging/colaTurnos';
 import type { InboundMessage, MessagingProvider } from '../messaging';
 import { manejarRegistro, CONSENT_VERSION } from '../flows/registro';
 import { manejarEvaluacion } from '../flows/evaluacion';
@@ -86,12 +87,31 @@ export function metaWebhook(req: Request, res: Response) {
   }
 
   for (const msg of evento.messages) {
-    void withKeyedLock(msg.from || 'sin-remitente', () =>
-      turnLimit(() =>
-        runWithRequestContext({ requestId, dialogId: msg.from }, () => procesarMensajeEntrante(msg, provider)),
-      ),
-    ).catch((e) => log.error('whatsapp: error procesando mensaje', { err: String(e) }));
+    if (pubsubHabilitado()) {
+      // Split webhook/worker (F11): el webhook solo publica; el worker procesa (POST /pubsub/turnos).
+      // Si el publish falla, se degrada al despacho local: perder el orden es mejor que perder el turno.
+      void publicarTurno(msg).then((r) => {
+        if (r.ok) return inc('pubsub:publicado');
+        inc('errors:pubsub_publish');
+        log.warn('whatsapp: publish falló — despacho local de respaldo');
+        return despacharMensaje(msg, provider, requestId);
+      }).catch((e) => log.error('whatsapp: error publicando turno', { err: String(e) }));
+    } else {
+      void despacharMensaje(msg, provider, requestId).catch((e) =>
+        log.error('whatsapp: error procesando mensaje', { err: String(e) }),
+      );
+    }
   }
+}
+
+/** Despacha UN mensaje con las garantías del pipeline: lock distribuido por conversación,
+ *  semáforo por instancia y correlación de logs. Lo usan el modo in-process y el worker Pub/Sub. */
+export async function despacharMensaje(msg: InboundMessage, provider: MessagingProvider, requestId = '-'): Promise<void> {
+  await withKeyedLock(msg.from || 'sin-remitente', () =>
+    turnLimit(() =>
+      runWithRequestContext({ requestId, dialogId: msg.from }, () => procesarMensajeEntrante(msg, provider)),
+    ),
+  );
 }
 
 /** Convierte un mensaje entrante en el contenido del turno para el motor (texto o bloques con imagen).

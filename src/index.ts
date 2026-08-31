@@ -11,6 +11,7 @@ import { requireDashboardToken } from './routes/guard';
 import { rateLimit } from './routes/rateLimit';
 import { planificar, despachar } from './reminders/motor';
 import { messagingProvider } from './messaging';
+import { verifyPubSubPush, pubsubTurnos } from './routes/pubsub';
 
 // ATLAS — tutor educativo por WhatsApp (Universidad Autónoma de Chile).
 // Fase 1: núcleo mínimo tras la limpieza del bot de ventas. El servicio expone:
@@ -59,6 +60,10 @@ app.get('/metrics', requireDashboardToken, async (_req, res) => {
 // POST = eventos, con verificación de firma. El procesamiento real llega en Fase 10.
 app.get('/webhooks/whatsapp', metaVerify);
 app.post('/webhooks/whatsapp', strictLimiter, verifyMetaSignature, metaWebhook);
+
+// Worker Pub/Sub (F11): la push subscription entrega aquí los turnos que publicó el webhook.
+// OIDC fail-closed (verifyPubSubPush); se procesa DENTRO del request (Pub/Sub espera el ack).
+app.post('/pubsub/turnos', verifyPubSubPush, pubsubTurnos);
 
 // Job de recordatorios (F9): lo dispara Cloud Scheduler (F11) cada ~15 min con el header del token.
 // Lock distribuido para que réplicas/ejecuciones solapadas no dupliquen trabajo (el dedupe real

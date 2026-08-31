@@ -59,6 +59,15 @@ const Env = z.object({
   MEMORY_TTL_HOURS: z.coerce.number().int().positive().default(48),
   MEMORY_MAX_TURNS: z.coerce.number().int().positive().default(24),
 
+  // ── Pub/Sub (F11: split webhook/worker). Vacío = despacho in-process (dev / piloto 1 servicio) ──
+  /** Ruta completa del topic: projects/<proyecto>/topics/atlas-turnos */
+  PUBSUB_TOPIC: z.string().regex(/^(projects\/[^/]+\/topics\/[^/]+)?$/).default(''),
+  /** Endpoint regional recomendado con ordering (p. ej. https://us-east1-pubsub.googleapis.com). */
+  PUBSUB_ENDPOINT: z.string().url().default('https://pubsub.googleapis.com'),
+  /** Service account que firma el OIDC del push (fail-closed sin ella). */
+  PUBSUB_PUSH_SA: z.string().default(''),
+  PUBSUB_PUSH_AUDIENCE: z.string().default(''),
+
   // ── Correo (F8: certificados y códigos de verificación) — SMTP genérico ──
   SMTP_HOST: z.string().default(''),
   SMTP_PORT: z.coerce.number().int().positive().default(587),
@@ -152,6 +161,11 @@ export const config = {
 
   memoryTtlHours: env.MEMORY_TTL_HOURS,
   memoryMaxTurns: env.MEMORY_MAX_TURNS,
+
+  pubsubTopic: env.PUBSUB_TOPIC,
+  pubsubEndpoint: env.PUBSUB_ENDPOINT,
+  pubsubPushSa: env.PUBSUB_PUSH_SA,
+  pubsubPushAudience: env.PUBSUB_PUSH_AUDIENCE,
 
   smtpHost: env.SMTP_HOST,
   smtpPort: env.SMTP_PORT,
