@@ -31,7 +31,6 @@ export function chunkTexto(texto: string, opts: ChunkOpts = {}): Chunk[] {
   if (limpio.length <= maxChars) return [{ orden: 0, texto: limpio }];
 
   const chunks: Chunk[] = [];
-  const paso = Math.max(1, Math.floor(maxChars * (1 - solape)));
   let inicio = 0;
   let orden = 0;
   while (inicio < limpio.length) {
@@ -43,8 +42,10 @@ export function chunkTexto(texto: string, opts: ChunkOpts = {}): Chunk[] {
     const corte = puntoDeCorte(resto, maxChars);
     chunks.push({ orden, texto: resto.slice(0, corte).trim() });
     orden++;
-    // Avanza con solape: retrocede desde el corte una fracción del tamaño.
-    inicio += Math.max(paso, corte - Math.floor(maxChars * solape));
+    // Avanza SIEMPRE relativo al corte real (revisión F9.1: usar un paso fijo mayor que un corte
+    // temprano saltaba texto — se perdían cientos de caracteres entre chunks). El corte es
+    // > maxChars*0.5 por construcción, así que el avance mínimo garantiza progreso.
+    inicio += Math.max(1, corte - Math.floor(maxChars * solape));
   }
   return chunks.filter((c) => c.texto.length > 0);
 }

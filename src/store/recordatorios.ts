@@ -45,7 +45,15 @@ export async function candidatosContinuarCurso(diasInactividad: number): Promise
        JOIN optin o ON o.person_id = ua.person_id AND o.otorgado
        JOIN person p ON p.id = ua.person_id
        JOIN person_identity pi ON pi.person_id = ua.person_id AND pi.tipo = 'wa_id'
-       WHERE ua.ultima < now() - ($1 || ' days')::interval`,
+       WHERE ua.ultima < now() - ($1 || ' days')::interval
+         -- Espaciado REAL (revisión F9.1): nada pendiente ni enviado en los últimos N días —
+         -- la clave_dedupe por bloques de epoch permitía dos envíos cercanos en el borde de bloque.
+         AND NOT EXISTS (
+           SELECT 1 FROM reminder rm2
+           WHERE rm2.person_id = ua.person_id AND rm2.tipo = 'continuar_curso'
+             AND (rm2.estado = 'programado'
+                  OR (rm2.estado = 'enviado' AND rm2.enviado_en > now() - ($1 || ' days')::interval))
+         )`,
       [String(diasInactividad)],
     );
     return r.rows.map((row: any) => ({
@@ -84,6 +92,7 @@ export type RecordatorioPendiente = {
   intentos: number;
   waId: string;
   nombre: string | null;
+  programadoPara: Date;
 };
 
 /** Recordatorios programados vencidos, con el wa_id de la persona. */
@@ -92,7 +101,7 @@ export async function pendientesDeDespacho(limit: number): Promise<RecordatorioP
   if (!pool) return [];
   try {
     const r = await pool.query(
-      `SELECT rm.id, rm.person_id, rm.tipo, rm.intentos, pi.valor_lookup AS wa_id, p.nombre
+      `SELECT rm.id, rm.person_id, rm.tipo, rm.intentos, rm.programado_para, pi.valor_lookup AS wa_id, p.nombre
        FROM reminder rm
        JOIN person p ON p.id = rm.person_id
        JOIN person_identity pi ON pi.person_id = rm.person_id AND pi.tipo = 'wa_id'
@@ -101,7 +110,8 @@ export async function pendientesDeDespacho(limit: number): Promise<RecordatorioP
       [limit],
     );
     return r.rows.map((row: any) => ({
-      id: row.id, personId: row.person_id, tipo: row.tipo, intentos: row.intentos, waId: row.wa_id, nombre: row.nombre,
+      id: row.id, personId: row.person_id, tipo: row.tipo, intentos: row.intentos,
+      waId: row.wa_id, nombre: row.nombre, programadoPara: new Date(row.programado_para),
     }));
   } catch (e) {
     log.warn('recordatorios: pendientes falló', { err: String(e) });
@@ -109,27 +119,74 @@ export async function pendientesDeDespacho(limit: number): Promise<RecordatorioP
   }
 }
 
-/** Transición de estado con guarda optimista (solo desde 'programado'). */
-export async function transicionar(
-  id: string,
-  cambios: { estado?: string; enviadoEn?: boolean; waMessageId?: string | null; intentos?: number; programadoPara?: Date },
-): Promise<void> {
+// ── Transiciones (revisión F9.1: semántica AT-MOST-ONCE) ──────────────────────
+// El despachador RECLAMA la fila (programado→enviado) ANTES de tocar la red: si el proceso muere
+// tras enviar, la fila ya está 'enviado' y nadie re-envía. Perder un recordatorio ante un fallo
+// raro es aceptable; duplicárselo al estudiante, no.
+
+/** Reclama la fila para envío. false = otro job ya la tomó (o cambió de estado). */
+export async function reclamarParaEnvio(id: string): Promise<boolean> {
+  const pool = getPool();
+  if (!pool) return false;
+  try {
+    const r = await pool.query(
+      `UPDATE reminder SET estado='enviado', enviado_en=now() WHERE id=$1 AND estado='programado' RETURNING id`,
+      [id],
+    );
+    return r.rows.length > 0;
+  } catch (e) {
+    log.warn('recordatorios: reclamar falló', { err: String(e) });
+    return false;
+  }
+}
+
+/** Guarda el wamid del envío exitoso (para correlacionar statuses). Best-effort. */
+export async function registrarWamid(id: string, waMessageId: string | null): Promise<void> {
   const pool = getPool();
   if (!pool) return;
-  const sets: string[] = [];
-  const vals: any[] = [];
-  const add = (frag: string, v: any) => { vals.push(v); sets.push(`${frag}$${vals.length}`); };
-  if (cambios.estado) add('estado = ', cambios.estado);
-  if (cambios.enviadoEn) sets.push('enviado_en = now()');
-  if (cambios.waMessageId !== undefined) add('wa_message_id = ', cambios.waMessageId);
-  if (cambios.intentos !== undefined) add('intentos = ', cambios.intentos);
-  if (cambios.programadoPara) add('programado_para = ', cambios.programadoPara.toISOString());
-  if (!sets.length) return;
-  vals.push(id);
   try {
-    await pool.query(`UPDATE reminder SET ${sets.join(', ')} WHERE id = $${vals.length} AND estado = 'programado'`, vals);
+    await pool.query(`UPDATE reminder SET wa_message_id=$2 WHERE id=$1`, [id, waMessageId]);
   } catch (e) {
-    log.warn('recordatorios: transicionar falló', { err: String(e) });
+    log.warn('recordatorios: registrarWamid falló', { err: String(e) });
+  }
+}
+
+/** Devuelve una fila reclamada a 'programado' (fallo de envío → reintento futuro). */
+export async function devolverAProgramado(id: string, intentos: number, cuando: Date): Promise<void> {
+  const pool = getPool();
+  if (!pool) return;
+  try {
+    await pool.query(
+      `UPDATE reminder SET estado='programado', enviado_en=NULL, intentos=$2, programado_para=$3 WHERE id=$1 AND estado='enviado'`,
+      [id, intentos, cuando.toISOString()],
+    );
+  } catch (e) {
+    log.warn('recordatorios: devolverAProgramado falló', { err: String(e) });
+  }
+}
+
+/** Re-agenda una fila aún no reclamada (fuera de ventana horaria). */
+export async function reprogramar(id: string, cuando: Date): Promise<void> {
+  const pool = getPool();
+  if (!pool) return;
+  try {
+    await pool.query(
+      `UPDATE reminder SET programado_para=$2 WHERE id=$1 AND estado='programado'`,
+      [id, cuando.toISOString()],
+    );
+  } catch (e) {
+    log.warn('recordatorios: reprogramar falló', { err: String(e) });
+  }
+}
+
+/** Marca un estado terminal (cancelado | omitido | fallido). */
+export async function marcarEstado(id: string, estado: 'cancelado' | 'omitido' | 'fallido'): Promise<void> {
+  const pool = getPool();
+  if (!pool) return;
+  try {
+    await pool.query(`UPDATE reminder SET estado=$2 WHERE id=$1`, [id, estado]);
+  } catch (e) {
+    log.warn('recordatorios: marcarEstado falló', { err: String(e) });
   }
 }
 

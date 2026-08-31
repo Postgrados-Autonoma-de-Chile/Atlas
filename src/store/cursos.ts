@@ -156,17 +156,22 @@ export type ResultadoCompletar = {
 /**
  * Completa la lección actual en UNA transacción: progreso → minutos → detección de fin de curso.
  * Si era la última, la inscripción pasa a 'completada' (F8 leerá este estado para certificar).
+ * Devuelve { requiereEntrega } si la lección actual nunca fue entregada (continuar_curso primero).
  */
-export async function completarLeccionActual(personId: string): Promise<ResultadoCompletar | null> {
+export async function completarLeccionActual(
+  personId: string,
+): Promise<ResultadoCompletar | { requiereEntrega: { orden: number; titulo: string } } | null> {
   const pool = getPool();
   if (!pool) return null;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    // FOR UPDATE OF e: sin el OF, el join bloqueaba también la fila del ÚNICO curso activo,
+    // serializando las completaciones de todos los estudiantes (revisión F9.1).
     const e = await client.query(
       `SELECT e.id, e.course_id FROM enrollment e JOIN course c ON c.id = e.course_id
        WHERE e.person_id = $1 AND e.estado = 'activa' AND c.estado = 'activo'
-       ORDER BY e.iniciado_en DESC LIMIT 1 FOR UPDATE`,
+       ORDER BY e.iniciado_en DESC LIMIT 1 FOR UPDATE OF e`,
       [personId],
     );
     const enr = e.rows[0];
@@ -183,6 +188,17 @@ export async function completarLeccionActual(personId: string): Promise<Resultad
     );
     const actual = l.rows[0];
     if (!actual) { await client.query('ROLLBACK'); return null; }
+
+    // Integridad académica (revisión F9.1): solo se completa una lección ENTREGADA — sin esto,
+    // repetir "terminé" fabricaba avance (y certificación) sin haber recibido contenido jamás.
+    const entregada = await client.query(
+      `SELECT 1 FROM lesson_progress WHERE enrollment_id=$1 AND lesson_id=$2`,
+      [enr.id, actual.id],
+    );
+    if (!entregada.rows.length) {
+      await client.query('ROLLBACK');
+      return { requiereEntrega: { orden: actual.orden, titulo: actual.titulo } };
+    }
 
     await client.query(
       `INSERT INTO lesson_progress (enrollment_id, lesson_id, estado, completado_en) VALUES ($1,$2,'completada',now())

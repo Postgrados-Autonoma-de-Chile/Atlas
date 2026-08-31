@@ -110,7 +110,8 @@ export function resumenEvaluacion(items: ItemGolden[], veredictos: (Veredicto | 
     total: items.length,
     juzgados: pares.length,
     aprobados: pares.filter((p) => p.v.aprobado).length,
-    tasaAprobacion: frac(pares, (v) => v.aprobado),
+    // Sin veredictos, la tasa es 0 (no 1): un juez caído jamás debe leerse como aprobación.
+    tasaAprobacion: pares.length ? frac(pares, (v) => v.aprobado) : 0,
     fidelidadProm: prom((v) => v.fidelidad),
     claridadProm: prom((v) => v.claridad),
     tonoProm: prom((v) => v.tono),

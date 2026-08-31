@@ -28,6 +28,8 @@ export type InboundMessage = {
   interactiveReplyTitle?: string;
   /** Id de media para descargar audio/imagen/documento vía descargarMedia(). */
   mediaId?: string;
+  /** Nombre del archivo (type=document) — separado del caption, que va en text. */
+  filename?: string;
 };
 
 /** Evento de estado de un mensaje saliente (sent/delivered/read/failed). */

@@ -135,6 +135,32 @@ test('nombre inválido 3 veces: pausa el registro y deja pasar el mensaje al tut
   assert.match(textos.at(-1)!, /retomamos/i);
 });
 
+test('doble-tap de un botón durante la captura NO se persiste como nombre (revisión F9.1)', async () => {
+  const { p, textos } = fakeProvider();
+  const from = '+56900010005';
+
+  await manejarRegistro(texto(from, 'hola'), p);
+  await manejarRegistro(boton(from, 'reg_si', 'Acepto'), p); // etapa: nombre
+  const r = await manejarRegistro(boton(from, 'reg_si', 'Acepto'), p); // doble-tap del botón
+  assert.equal(r.handled, true);
+  assert.match(textos.at(-1)!, /por texto/i, 'pide texto en vez de guardar "Acepto" como nombre');
+  await manejarRegistro(texto(from, 'Rodrigo'), p);
+  assert.match(textos.at(-1)!, /Rodrigo/, 'el nombre real se captura después sin haber gastado reintentos');
+});
+
+test('consentimiento: re-ofrece UNA vez ante texto libre; a la segunda pausa y el mensaje va al tutor', async () => {
+  const { p, botones } = fakeProvider();
+  const from = '+56900010006';
+
+  await manejarRegistro(texto(from, 'hola'), p); // oferta 1
+  let r = await manejarRegistro(texto(from, '¿de qué trata el curso?'), p);
+  assert.equal(r.handled, true, 're-oferta única');
+  assert.equal(botones.length, 2);
+  r = await manejarRegistro(texto(from, '¿y quién lo dicta?'), p);
+  assert.equal(r.handled, false, 'a la segunda, la pregunta llega al tutor');
+  assert.equal(botones.length, 2, 'sin tercera oferta');
+});
+
 test('corregir el email: vuelve a pedirlo', async () => {
   const { p, textos, botones } = fakeProvider();
   const from = '+56900010004';

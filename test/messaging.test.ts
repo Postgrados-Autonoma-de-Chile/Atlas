@@ -78,6 +78,8 @@ test('normalizarEntrante: texto + interactivo + status en un mismo webhook', () 
             { id: 'wamid.T1', from: '56912345678', timestamp: '1756500000', type: 'text', text: { body: 'hola' } },
             { id: 'wamid.T2', from: '56912345678', timestamp: '1756500060', type: 'interactive', interactive: { type: 'button_reply', button_reply: { id: 'v', title: 'Verdadero' } } },
             { id: 'wamid.T3', from: '56912345678', timestamp: '1756500120', type: 'audio', audio: { id: 'MEDIA1', mime_type: 'audio/ogg' } },
+            { id: 'wamid.T4', from: '56912345678', timestamp: '1756500150', type: 'button', button: { payload: 'continuar', text: 'Continuar curso' } },
+            { id: 'wamid.T5', from: '56912345678', timestamp: '1756500180', type: 'document', document: { id: 'DOC1', filename: 'apuntes.pdf', caption: 'mira esto' } },
           ],
           statuses: [
             { id: 'wamid.OUT1', status: 'delivered', timestamp: '1756500030', recipient_id: '56912345678' },
@@ -88,16 +90,22 @@ test('normalizarEntrante: texto + interactivo + status en un mismo webhook', () 
     }],
   };
   const ev = normalizarEntrante(body);
-  assert.equal(ev.messages.length, 3);
+  assert.equal(ev.messages.length, 5);
   assert.deepEqual(
     ev.messages.map((m) => m.type),
-    ['text', 'interactive', 'audio'],
+    ['text', 'interactive', 'audio', 'interactive', 'document'],
   );
   assert.equal(ev.messages[0].text, 'hola');
   assert.equal(ev.messages[0].from, '+56912345678');
   assert.equal(ev.messages[1].interactiveReplyId, 'v');
   assert.equal(ev.messages[1].interactiveReplyTitle, 'Verdadero');
   assert.equal(ev.messages[2].mediaId, 'MEDIA1');
+  // Quick-reply de PLANTILLA (type 'button' en Cloud API) → normalizado como interactive (F9.1).
+  assert.equal(ev.messages[3].interactiveReplyId, 'continuar');
+  assert.equal(ev.messages[3].interactiveReplyTitle, 'Continuar curso');
+  // Documento: filename separado del caption (F9.1).
+  assert.equal(ev.messages[4].filename, 'apuntes.pdf');
+  assert.equal(ev.messages[4].text, 'mira esto');
   assert.equal(ev.statuses.length, 2);
   assert.equal(ev.statuses[0].status, 'delivered');
   assert.equal(ev.statuses[1].errorCode, '131047');

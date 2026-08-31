@@ -27,6 +27,7 @@ export async function executeTool(name: string, _input: unknown, ctx?: AgentCont
     switch (name) {
       case 'consultar_mis_datos': {
         const persona = ctx?.conversationId ? await buscarPersonaPorWaId(ctx.conversationId) : null;
+        if (persona === undefined) return { ok: false, error: 'bd_no_disponible' };
         if (!persona) return { ok: true, registrado: false };
         return {
           ok: true,
@@ -76,6 +77,13 @@ export async function executeTool(name: string, _input: unknown, ctx?: AgentCont
         if (!ctx?.personId) return NO_REGISTRADO;
         const r = await completarLeccionActual(ctx.personId);
         if (!r) return { ok: false, error: 'sin_leccion_pendiente' };
+        if ('requiereEntrega' in r) {
+          return {
+            ok: false,
+            error: 'leccion_no_entregada',
+            mensaje: `La microcápsula ${r.requiereEntrega.orden} ("${r.requiereEntrega.titulo}") aún no le ha sido entregada al estudiante: usa continuar_curso para entregársela primero (con su material); solo después de verla se puede completar.`,
+          };
+        }
         void audit({
           type: 'leccion_completada',
           dialogId: ctx?.conversationId,

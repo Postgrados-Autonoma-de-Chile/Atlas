@@ -28,13 +28,14 @@ const LETRAS = ['A', 'B', 'C', 'D'];
 /** Minúsculas sin acentos: el \b de JS es ASCII y trata "í" como no-palabra ("sí\b" fallaría). */
 const plano = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 const RE_INICIO = /\b(quiz|mini[- ]?quiz|evaluacion|practicar|prueba)\b/;
-const RE_SI = /^(si+|dale|ok(ay)?|ya|bueno|claro|vamos|obvio|por ?favor)\b/;
 const RE_NO = /^(no+|ahora no|despues|luego)\b/;
 const RE_SALIR = /\b(salir|pausa(r)?|detener|cancelar|despues sigo)\b/;
 
-/** Marca que hay un quiz ofrecido tras completar una lección (la escribe el toolRunner). */
+/** Marca que hay un quiz ofrecido tras completar una lección (la escribe el toolRunner).
+ *  TTL corto (10 min): pasada la conversación inmediata, el "sí" vuelve a pertenecerle al tutor
+ *  (revisión F9.1) — el quiz sigue disponible con la palabra "quiz". */
 export async function marcarOfertaQuiz(waId: string): Promise<void> {
-  await setJson(OFERTA_KEY(waId), { en: Date.now() }, 3600);
+  await setJson(OFERTA_KEY(waId), { en: Date.now() }, 600);
 }
 
 /** Texto plano o título del botón. */
@@ -135,7 +136,11 @@ export async function manejarEvaluacion(
   // ── Sin evaluación activa: ¿corresponde iniciar una? ────────────────────────
   const texto = plano(textoDe(msg));
   const oferta = await getJson<{ en: number }>(OFERTA_KEY(waId));
-  const aceptaOferta = oferta && msg.type !== 'interactive' && RE_SI.test(texto);
+  // Aceptación ESTRICTA (revisión F9.1): solo una afirmación corta y sola ("sí", "sí dale", "ok")
+  // toma la oferta — un "sí" dentro de una frase al tutor ("sí, creo que quedó claro") no la secuestra.
+  const afirmacionCorta = /^(si+|dale|ok|ya|bueno|claro|vamos)( (dale|po|ok|si+|vamos|bueno))?$/
+    .test(texto.replace(/[,.!¡¿?]/g, ' ').replace(/\s+/g, ' ').trim());
+  const aceptaOferta = oferta && msg.type !== 'interactive' && afirmacionCorta;
   const pideQuiz = RE_INICIO.test(texto);
   if (oferta && RE_NO.test(texto)) {
     await kvDel(OFERTA_KEY(waId)); // rechazó la oferta: el mensaje sigue al tutor con normalidad

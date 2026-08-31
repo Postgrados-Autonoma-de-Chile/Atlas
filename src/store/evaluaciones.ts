@@ -147,7 +147,17 @@ export async function registrarRespuesta(
     const finalizado = respondidas.rows[0].n >= total;
     if (finalizado) await client.query(`UPDATE quiz_attempt SET finalizado_en=now() WHERE id=$1`, [attemptId]);
     await client.query('COMMIT');
-    const siguiente = finalizado ? null : await preguntaPorOrden(quizId, pregunta.orden + 1);
+    // Lectura POST-commit en try propio (revisión F9.1): si fallara, la respuesta YA quedó guardada
+    // — devolver el resultado sin siguiente (el flujo cierra el quiz con resumen), jamás null
+    // (que mostraba "problema guardando tu respuesta" siendo falso).
+    let siguiente: PreguntaConOpciones | null = null;
+    if (!finalizado) {
+      try {
+        siguiente = await preguntaPorOrden(quizId, pregunta.orden + 1);
+      } catch (e) {
+        log.warn('evaluaciones: no se pudo leer la siguiente pregunta (respuesta ya guardada)', { err: String(e) });
+      }
+    }
     return { esCorrecta: elegida.esCorrecta, correctaTexto: correcta.texto, explicacion: pregunta.explicacion, correctas, total, siguiente, finalizado };
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});

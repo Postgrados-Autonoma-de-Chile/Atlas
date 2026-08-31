@@ -104,11 +104,20 @@ export function normalizarEntrante(body: any): InboundEvent {
             interactiveReplyId: r?.id ? String(r.id) : undefined,
             interactiveReplyTitle: r?.title ? String(r.title) : undefined,
           });
+        } else if (m.type === 'button') {
+          // Respuesta a quick-reply de una PLANTILLA (p. ej. recordatorio): Cloud API la entrega
+          // como type 'button', no 'interactive' (revisión F9.1) — normaliza al mismo formato.
+          messages.push({
+            ...base, type: 'interactive',
+            interactiveReplyId: m.button?.payload ? String(m.button.payload) : undefined,
+            interactiveReplyTitle: m.button?.text ? String(m.button.text) : undefined,
+          });
         } else if (m.type === 'audio' || m.type === 'image' || m.type === 'document') {
           messages.push({
             ...base, type: m.type,
             mediaId: m[m.type]?.id ? String(m[m.type].id) : undefined,
             text: m[m.type]?.caption ? String(m[m.type].caption) : undefined,
+            ...(m.type === 'document' && m.document?.filename ? { filename: String(m.document.filename) } : {}),
           });
         } else {
           messages.push({ ...base, type: 'unknown' });

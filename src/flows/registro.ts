@@ -80,6 +80,9 @@ export async function manejarRegistro(msg: InboundMessage, provider: MessagingPr
   if (!dbEnabled()) return { handled: false, persona: null };
 
   const persona = await buscarPersonaPorWaId(msg.from);
+  // undefined = error de BD (no "no registrado"): no iniciar el asistente — el mensaje sigue al
+  // tutor sin identidad en vez de secuestrar a un estudiante ya registrado (revisión F9.1).
+  if (persona === undefined) return { handled: false, persona: null };
   if (persona) return { handled: false, persona };
 
   const estado = (await getEstado(msg.from)) ?? { etapa: 'consentimiento' as Etapa, intentos: -1 };
@@ -118,7 +121,14 @@ export async function manejarRegistro(msg: InboundMessage, provider: MessagingPr
         void audit({ type: 'registro_rechazado', dialogId: msg.from });
         return { handled: true };
       }
-      // Respuesta libre que no es sí/no: re-ofrecer una vez con los botones.
+      // Respuesta libre que no es sí/no: re-ofrecer UNA sola vez; a la segunda, pausar el registro
+      // y dejar que la pregunta llegue al tutor (revisión F9.1: la re-oferta infinita bloqueaba
+      // cualquier consulta de un usuario no registrado).
+      if (estado.intentos >= 1) {
+        await setEstado(msg.from, { ...estado, etapa: 'pausado', intentos: 0 });
+        return { handled: false, persona: null };
+      }
+      await setEstado(msg.from, { ...estado, intentos: estado.intentos + 1 });
       await enviarConsentimiento(msg.from, provider);
       return { handled: true };
     }
@@ -205,6 +215,12 @@ async function capturarCampo(
   estado: EstadoRegistro,
   opts: { valida: (v: string) => boolean; alValido: (v: string) => Promise<void>; invalido: string },
 ): Promise<ResultadoRegistro> {
+  // Solo TEXTO cuenta como valor de un campo (revisión F9.1): un doble-tap al botón anterior
+  // ("Acepto") llegaba como interactive y se persistía como nombre. No consume reintentos.
+  if (msg.type !== 'text') {
+    await provider.enviarTexto(msg.from, 'Escríbeme la respuesta por texto, por favor 🙂');
+    return { handled: true };
+  }
   const valor = textoDe(msg);
   if (valor && opts.valida(valor)) {
     await opts.alValido(valor);

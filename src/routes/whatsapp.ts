@@ -17,9 +17,9 @@ import type { InboundMessage, MessagingProvider } from '../messaging';
 import { manejarRegistro, CONSENT_VERSION } from '../flows/registro';
 import { manejarEvaluacion } from '../flows/evaluacion';
 import { contextoAcademico } from '../store/cursos';
-import { registrarOptOut } from '../store/personas';
+import { registrarOptOut, registrarOptIn } from '../store/personas';
 import { cancelarDePersona, marcarFallidoPorWamid } from '../store/recordatorios';
-import { esOptOutRecordatorios } from '../reminders/motor';
+import { esOptOutRecordatorios, esOptInRecordatorios } from '../reminders/motor';
 import { setJson } from '../store/kv';
 
 // Canal WhatsApp Cloud API (Fase 10a): webhook → normalización → dedupe → lock por conversación →
@@ -131,8 +131,11 @@ async function contenidoDelTurno(
       ];
     }
 
-    case 'document':
-      return `(el estudiante envió el archivo "${msg.text ?? 'sin nombre'}" que no puedo abrir por este medio; pídele que te cuente por texto qué necesita)`;
+    case 'document': {
+      const nombre = msg.filename ?? 'sin nombre';
+      const caption = msg.text?.trim() ? ` Su comentario junto al archivo: "${msg.text.trim()}".` : '';
+      return `(el estudiante envió el archivo "${nombre}" que no puedo abrir por este medio.${caption} Pídele que te cuente por texto qué necesita)`;
+    }
 
     default:
       return null;
@@ -143,8 +146,9 @@ async function contenidoDelTurno(
 export async function procesarMensajeEntrante(msg: InboundMessage, provider: MessagingProvider): Promise<void> {
   if (!msg.from || !msg.waMessageId) return;
 
-  // Idempotencia: Meta reintenta el webhook hasta 7 días; el mismo wamid solo se procesa una vez.
-  if (!(await once(`wa:msg:${msg.waMessageId}`, 24 * 3600))) {
+  // Idempotencia: Meta reintenta el webhook hasta 7 días → el TTL del dedupe debe cubrir toda esa
+  // ventana con margen (revisión F9.1: 24h dejaba pasar reintentos tardíos como mensajes nuevos).
+  if (!(await once(`wa:msg:${msg.waMessageId}`, 8 * 24 * 3600))) {
     return log.info('whatsapp: mensaje duplicado ignorado', { waMessageId: msg.waMessageId });
   }
   inc('inbound');
@@ -162,13 +166,30 @@ export async function procesarMensajeEntrante(msg: InboundMessage, provider: Mes
   if (registro.handled) return;
   const persona = registro.persona ?? null;
 
-  // Opt-out de recordatorios (F9): efectivo e inmediato — persiste el consentimiento negativo y
-  // cancela los programados (obligación de Meta y de la Ley 21.719).
+  // Opt-out / opt-in de recordatorios (F9): efectivo e inmediato. El opt-out se evalúa PRIMERO
+  // ("no quiero recordatorios" contiene "quiero recordatorios"). Solo se confirma lo que realmente
+  // se persistió (revisión F9.1) — obligación de Meta y de la Ley 21.719.
   if (persona && msg.type === 'text' && esOptOutRecordatorios(msg.text ?? '')) {
-    await registrarOptOut(persona.id, CONSENT_VERSION);
+    const persistido = await registrarOptOut(persona.id, CONSENT_VERSION);
     await cancelarDePersona(persona.id);
-    await provider.enviarTexto(msg.from, 'Listo ✅ No te enviaré más recordatorios. Puedes reactivarlos cuando quieras diciéndome "quiero recordatorios". Tu curso sigue disponible: escribe *continuar* cuando gustes.');
-    void audit({ type: 'optout_recordatorios', dialogId: msg.from });
+    await provider.enviarTexto(
+      msg.from,
+      persistido
+        ? 'Listo ✅ No te enviaré más recordatorios. Puedes reactivarlos cuando quieras diciéndome "quiero recordatorios". Tu curso sigue disponible: escribe *continuar* cuando gustes.'
+        : 'No pude registrar tu solicitud en este momento 😕 Inténtalo de nuevo en unos minutos, por favor.',
+    );
+    if (persistido) void audit({ type: 'optout_recordatorios', dialogId: msg.from });
+    return;
+  }
+  if (persona && msg.type === 'text' && esOptInRecordatorios(msg.text ?? '')) {
+    const persistido = await registrarOptIn(persona.id, CONSENT_VERSION);
+    await provider.enviarTexto(
+      msg.from,
+      persistido
+        ? '¡Listo! ✅ Recordatorios reactivados. Te avisaré cuando tengas algo pendiente del curso 🙂'
+        : 'No pude registrar el cambio en este momento 😕 Inténtalo de nuevo en unos minutos, por favor.',
+    );
+    if (persistido) void audit({ type: 'optin_recordatorios', dialogId: msg.from });
     return;
   }
 

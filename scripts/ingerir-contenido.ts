@@ -53,7 +53,9 @@ async function reemplazarChunks(
   }
 }
 
-/** Busca (o crea) el content_item de un tipo para una lección; devuelve {id, textoHash}. */
+/** Busca (o crea) el content_item de un tipo para una lección. NO escribe texto_hash: el hash se
+ *  marca recién cuando los chunks quedaron insertados (marcarIngerido) — si los embeddings fallan,
+ *  el próximo run reintenta en vez de saltarse el contenido como "sin cambios" (revisión F9.1). */
 async function upsertItem(lessonId: string, tipo: string, titulo: string, texto: string) {
   const pool = getPool()!;
   const existente = await pool.query(
@@ -64,15 +66,20 @@ async function upsertItem(lessonId: string, tipo: string, titulo: string, texto:
   if (existente.rows[0]) {
     const sinCambios = existente.rows[0].texto_hash === h;
     if (!sinCambios) {
-      await pool.query(`UPDATE content_item SET titulo=$2, texto=$3, texto_hash=$4 WHERE id=$1`, [existente.rows[0].id, titulo, texto, h]);
+      await pool.query(`UPDATE content_item SET titulo=$2, texto=$3 WHERE id=$1`, [existente.rows[0].id, titulo, texto]);
     }
-    return { id: existente.rows[0].id as string, sinCambios };
+    return { id: existente.rows[0].id as string, sinCambios, h };
   }
   const r = await pool.query(
-    `INSERT INTO content_item (lesson_id, tipo, titulo, texto, texto_hash) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-    [lessonId, tipo, titulo, texto, h],
+    `INSERT INTO content_item (lesson_id, tipo, titulo, texto) VALUES ($1,$2,$3,$4) RETURNING id`,
+    [lessonId, tipo, titulo, texto],
   );
-  return { id: r.rows[0].id as string, sinCambios: false };
+  return { id: r.rows[0].id as string, sinCambios: false, h };
+}
+
+/** Marca la ingesta como completada (solo tras insertar los chunks con éxito). */
+async function marcarIngerido(itemId: string, h: string) {
+  await getPool()!.query(`UPDATE content_item SET texto_hash=$2 WHERE id=$1`, [itemId, h]);
 }
 
 async function modoDescripciones(codigo?: string) {
@@ -89,6 +96,7 @@ async function modoDescripciones(codigo?: string) {
     const item = await upsertItem(l.id, 'material', 'Descripción oficial de la microcápsula', texto);
     if (item.sinCambios) { omitidas++; continue; }
     await reemplazarChunks(item.id, l.id, curso.id, fuente, chunkTexto(texto));
+    await marcarIngerido(item.id, item.h);
     indexadas++;
     console.log(`✔ ${fuente}`);
   }
@@ -123,6 +131,7 @@ async function modoTranscripcion(codigo: string, ordenStr: string, archivo: stri
   }
   const chunks = chunkTexto(texto);
   await reemplazarChunks(item.id, l.rows[0].id, curso.id, fuente, chunks);
+  await marcarIngerido(item.id, item.h);
   console.log(`✔ ${fuente}: ${chunks.length} chunks indexados (${texto.length} chars).`);
 }
 

@@ -170,6 +170,16 @@ test('oferta tras completar lección: sí inicia, no la descarta', async () => {
   assert.match(textos.at(-2) ?? textos.at(-1)!, /Mini-quiz/);
 });
 
+test('un "sí" dentro de una frase al tutor NO secuestra la oferta (revisión F9.1)', async () => {
+  const { p } = fakeProvider();
+  const from = '+56900040005';
+  await marcarOfertaQuiz(from);
+  let r = await manejarEvaluacion(texto(from, 'sí, creo que quedó claro lo de los sesgos'), PERSONA as any, p);
+  assert.equal(r.handled, false, 'la frase va al tutor');
+  r = await manejarEvaluacion(texto(from, 'sí'), PERSONA as any, p);
+  assert.equal(r.handled, true, 'la afirmación corta y sola sí toma la oferta');
+});
+
 test('sin persona o sin BD: el flujo no intercepta', async () => {
   const { p } = fakeProvider();
   const r = await manejarEvaluacion(texto('+56900040004', 'quiz'), null, p);

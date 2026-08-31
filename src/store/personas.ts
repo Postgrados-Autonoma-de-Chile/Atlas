@@ -25,8 +25,13 @@ function rowToPersona(r: any, emailVerificado = false): Persona {
   };
 }
 
-/** Busca la persona vinculada a un wa_id (E.164 con '+'). null si no existe o no hay BD. */
-export async function buscarPersonaPorWaId(waId: string): Promise<Persona | null> {
+/**
+ * Busca la persona vinculada a un wa_id (E.164 con '+').
+ * null = NO existe (certeza) · undefined = ERROR de BD (no se sabe) — revisión F9.1: un error
+ * transitorio no debe tratarse como "no registrado" (mandaría el flujo de consentimiento a un
+ * estudiante ya registrado y consumiría su mensaje).
+ */
+export async function buscarPersonaPorWaId(waId: string): Promise<Persona | null | undefined> {
   const pool = getPool();
   if (!pool || !waId) return null;
   try {
@@ -42,7 +47,7 @@ export async function buscarPersonaPorWaId(waId: string): Promise<Persona | null
     return r.rows[0] ? rowToPersona(r.rows[0], r.rows[0].email_verificado) : null;
   } catch (e) {
     log.warn('personas: buscarPersonaPorWaId falló', { err: String(e) });
-    return null;
+    return undefined;
   }
 }
 
@@ -72,7 +77,7 @@ export async function crearPersonaRegistrada(reg: RegistroNuevo): Promise<Person
     );
     if (existente.rows[0]) {
       await client.query('ROLLBACK');
-      return buscarPersonaPorWaId(reg.waId);
+      return (await buscarPersonaPorWaId(reg.waId)) ?? null;
     }
     const p = await client.query(
       `INSERT INTO person (nombre, apellido, email_enc) VALUES ($1,$2,$3) RETURNING id, nombre, apellido, email_enc`,
@@ -80,9 +85,17 @@ export async function crearPersonaRegistrada(reg: RegistroNuevo): Promise<Person
     );
     const personId = p.rows[0].id;
     await client.query(
-      `INSERT INTO person_identity (person_id, tipo, valor_lookup, verificado) VALUES
-       ($1,'wa_id',$2,true), ($1,'email',$3,false)`,
-      [personId, reg.waId, hashLookup(emailNorm)],
+      `INSERT INTO person_identity (person_id, tipo, valor_lookup, verificado) VALUES ($1,'wa_id',$2,true)`,
+      [personId, reg.waId],
+    );
+    // El email puede pertenecer YA a otra persona (número nuevo del mismo estudiante, correo
+    // familiar compartido): eso NO debe romper el registro (revisión F9.1). La identidad email
+    // queda con su primer dueño; el email en claro-cifrado vive igual en person.email_enc, y la
+    // política de vinculación de cuentas se define en F8 (certificación exige email verificado).
+    await client.query(
+      `INSERT INTO person_identity (person_id, tipo, valor_lookup, verificado) VALUES ($1,'email',$2,false)
+       ON CONFLICT ON CONSTRAINT person_identity_unico DO NOTHING`,
+      [personId, hashLookup(emailNorm)],
     );
     await client.query(
       `INSERT INTO consent (person_id, tipo, version_texto, otorgado) VALUES
@@ -100,18 +113,22 @@ export async function crearPersonaRegistrada(reg: RegistroNuevo): Promise<Person
   }
 }
 
-/** Registra la baja de recordatorios (opt-out). Devuelve true si se persistió. */
-export async function registrarOptOut(personId: string, version: string): Promise<boolean> {
+/** Registra la baja o reactivación de recordatorios. Devuelve true si se persistió. */
+async function registrarConsentRecordatorios(personId: string, version: string, otorgado: boolean): Promise<boolean> {
   const pool = getPool();
   if (!pool) return false;
   try {
     await pool.query(
-      `INSERT INTO consent (person_id, tipo, version_texto, otorgado) VALUES ($1,'recordatorios',$2,false)`,
-      [personId, version],
+      `INSERT INTO consent (person_id, tipo, version_texto, otorgado) VALUES ($1,'recordatorios',$2,$3)`,
+      [personId, version, otorgado],
     );
     return true;
   } catch (e) {
-    log.warn('personas: registrarOptOut falló', { err: String(e) });
+    log.warn('personas: registrarConsentRecordatorios falló', { err: String(e) });
     return false;
   }
 }
+
+export const registrarOptOut = (personId: string, version: string) => registrarConsentRecordatorios(personId, version, false);
+/** Reactivación prometida en el mensaje de opt-out ("quiero recordatorios") — revisión F9.1. */
+export const registrarOptIn = (personId: string, version: string) => registrarConsentRecordatorios(personId, version, true);
