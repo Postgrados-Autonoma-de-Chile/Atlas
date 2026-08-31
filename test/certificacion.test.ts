@@ -211,3 +211,75 @@ test('fallo del correo del certificado: queda emitido con folio y avisa reintent
   assert.equal(cert.estado, 'enviado');
   assert.equal(cert.folio, 'ATLAS-2026-0001');
 });
+
+// ── Ingreso del código: robustez (hallazgo del piloto) ──────────────────────────────────────────
+//
+// En la prueba real, un mensaje con la palabra "certificado" llegó mientras el flujo esperaba el
+// código y recibió "Ese código no coincide 🤔" — además de consumir uno de los tres intentos. Ese
+// mensaje no traía ningún código: no había nada que pudiera "no coincidir". Con tres mensajes así
+// (un estudiante escribiendo "no me llegó nada", "reenvíamelo", "hola?") el flujo se cancelaba solo,
+// sin que la persona hubiera errado un código jamás.
+//
+// Segundo problema del mismo paso: WhatsApp incluye el mensaje CITADO cuando alguien responde
+// tocando "responder", así que el código llega rodeado de texto. Exigir que el mensaje entero
+// fuera el código rechazaba respuestas perfectamente correctas.
+
+// Cada prueba usa un waId propio: el estado del flujo vive en el KV por número, y una prueba que
+// termina a medias (esperando el codigo) contaminaba a la siguiente.
+let nWa = 0;
+const llegarAlPasoDelCodigo = async () => {
+  reset('datos_pendientes');
+  tieneRutFlag = true;
+  const wa = `+5697777${String(++nWa).padStart(4, '0')}`; // prefijo propio: +5690006* ya lo usan las pruebas de arriba
+  const { p, textos } = fakeProvider();
+  await manejarCertificacion(texto(wa, 'certificado'), PERSONA, p);
+  return { p, textos, wa };
+};
+
+test('texto sin código NO se trata como código equivocado ni gasta intentos', async () => {
+  const { p, textos, wa } = await llegarAlPasoDelCodigo();
+  const codigo = ultimoCodigo();
+
+  // Tres mensajes sin código: antes esto cancelaba el certificado.
+  for (const t of ['certificado', 'no me llegó nada', 'hola?']) {
+    await manejarCertificacion(texto(wa, t), PERSONA, p);
+    assert.doesNotMatch(textos.at(-1)!, /no coincide/i, `"${t}" no es un código equivocado`);
+  }
+
+  // El flujo sigue vivo: el código correcto todavía funciona.
+  await manejarCertificacion(texto(wa, codigo), PERSONA, p);
+  assert.equal(emailVerificado, true, 'tras los mensajes sin código el flujo debe seguir aceptando el correcto');
+  assert.equal(cert.estado, 'enviado');
+});
+
+test('"certificado" durante el paso del código recibe una guía, no un reproche', async () => {
+  const { p, textos, wa } = await llegarAlPasoDelCodigo();
+  await manejarCertificacion(texto(wa, 'Certificado'), PERSONA, p);
+  assert.match(textos.at(-1)!, /6 d[ií]gitos/i);
+  assert.doesNotMatch(textos.at(-1)!, /no coincide/i);
+});
+
+test('el código se reconoce aunque venga dentro del texto (respuesta citada de WhatsApp)', async () => {
+  const { p, wa } = await llegarAlPasoDelCodigo();
+  const codigo = ultimoCodigo();
+  const citado = `Te envié un código de 6 dígitos a *r***a@gmail.com*. Escríbelo aquí\n${codigo}`;
+  await manejarCertificacion(texto(wa, citado), PERSONA, p);
+  assert.equal(emailVerificado, true, 'el código válido dentro de una cita debe aceptarse');
+});
+
+test('un RUT no se confunde con un código de 6 dígitos', async () => {
+  const { p, textos, wa } = await llegarAlPasoDelCodigo();
+  // 19864724-1 contiene "198647", pero no es un grupo de 6 dígitos aislado.
+  await manejarCertificacion(texto(wa, '19864724-1'), PERSONA, p);
+  assert.match(textos.at(-1)!, /6 d[ií]gitos/i, 'debe pedir el código, no decir que no coincide');
+  assert.equal(emailVerificado, false);
+});
+
+test('un código de 6 dígitos REALMENTE equivocado sí gasta intentos y termina en pausa', async () => {
+  const { p, textos, wa } = await llegarAlPasoDelCodigo();
+  const codigo = ultimoCodigo();
+  const malo = codigo === '000000' ? '111111' : '000000';
+  for (let i = 0; i < 3; i++) await manejarCertificacion(texto(wa, malo), PERSONA, p);
+  assert.match(textos.at(-1)!, /pausa/i, 'tres códigos equivocados sí deben cancelar');
+  assert.equal(emailVerificado, false);
+});

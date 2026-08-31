@@ -199,9 +199,30 @@ export async function manejarCertificacion(
         if (!ok) await provider.enviarTexto(waId, 'No pude reenviar el código ahora mismo 😕 Inténtalo en unos minutos.');
         return { handled: true };
       }
-      const codigo = texto.replace(/\s/g, '');
       const guardado = await getJson<{ codigo: string }>(CODE_KEY(persona.id));
-      if (!/^\d{6}$/.test(codigo) || !guardado || guardado.codigo !== codigo) {
+      // El código puede venir DENTRO de otro texto, no solo. WhatsApp incluye el mensaje citado
+      // cuando se responde a uno, y la gente escribe "mi código es 123456". Se buscan grupos de 6
+      // dígitos en vez de exigir que el mensaje entero sea el código. \b a ambos lados para que un
+      // RUT (19864724-1) no aporte un falso "198647".
+      const compacto = texto.replace(/\s+/g, '');
+      const candidatos = [...new Set([...(texto.match(/\b\d{6}\b/g) ?? []), ...(compacto.match(/\b\d{6}\b/g) ?? [])])];
+
+      // SIN ningún grupo de 6 dígitos no hay código equivocado: la persona escribió otra cosa
+      // ("certificado", "no me llegó nada"). Contarlo como intento fallido la expulsaba del flujo
+      // a los tres mensajes sin haber errado un código jamás — se detectó en el piloto, cuando un
+      // mensaje con la palabra "certificado" recibió "Ese código no coincide". Se guía sin gastar
+      // intentos: los intentos son para códigos realmente equivocados.
+      if (candidatos.length === 0) {
+        await provider.enviarTexto(
+          waId,
+          RE_CERT.test(plano(texto))
+            ? 'Ya estamos en el último paso 🙂 Solo falta el código de *6 dígitos* que te llegó al correo (revisa también spam). Si no te llegó, escribe *reenviar*.'
+            : 'Para emitir tu certificado necesito el código de *6 dígitos* que te llegó al correo (revisa también spam). Escríbelo aquí, o escribe *reenviar* si no te llega.',
+        );
+        return { handled: true };
+      }
+
+      if (!guardado || !candidatos.includes(guardado.codigo)) {
         if (estado.intentos >= 2) {
           await kvDel(KEY(waId));
           await kvDel(CODE_KEY(persona.id));
