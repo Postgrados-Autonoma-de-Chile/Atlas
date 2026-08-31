@@ -94,6 +94,7 @@ export function normalizarEntrante(body: any): InboundEvent {
           waMessageId: String(m.id ?? ''),
           from: normalizarE164(m.from),
           timestamp: new Date(Number(m.timestamp ?? 0) * 1000),
+          aPhoneNumberId: value.metadata?.phone_number_id ? String(value.metadata.phone_number_id) : undefined,
         };
         if (m.type === 'text') {
           messages.push({ ...base, type: 'text', text: String(m.text?.body ?? '') });
