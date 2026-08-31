@@ -23,6 +23,7 @@ import { registrarOptOut, registrarOptIn } from '../store/personas';
 import { cancelarDePersona, marcarFallidoPorWamid } from '../store/recordatorios';
 import { esOptOutRecordatorios, esOptInRecordatorios } from '../reminders/motor';
 import { setJson } from '../store/kv';
+import { marcarRespondio } from '../store/invitaciones';
 
 // Canal WhatsApp Cloud API (Fase 10a): webhook → normalización → dedupe → lock por conversación →
 // motor del tutor → respuesta por el MessagingProvider.
@@ -178,6 +179,10 @@ export async function procesarMensajeEntrante(msg: InboundMessage, provider: Mes
   // Ventana de servicio de 24h de WhatsApp: registrar la última entrada del estudiante permite a
   // los recordatorios (F9) elegir texto libre (gratis) vs plantilla utility.
   void setJson(`ult_in:${msg.from}`, { t: Date.now() }, 25 * 3600).catch(() => {});
+
+  // Convocatoria: este número escribió. Si estaba en la cola de invitaciones sale de ella, venga del
+  // QR o de la plantilla — así no se le paga una invitación a quien ya llegó. Best-effort.
+  void marcarRespondio(msg.from).catch(() => {});
 
   // Marcar como leído (check azul) — mejora la experiencia; no crítico.
   void provider.marcarLeido(msg.waMessageId).catch(() => {});

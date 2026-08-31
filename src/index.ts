@@ -13,6 +13,9 @@ import { rateLimit } from './routes/rateLimit';
 import { planificar, despachar } from './reminders/motor';
 import { messagingProvider } from './messaging';
 import { verifyPubSubPush, pubsubTurnos } from './routes/pubsub';
+import { correrOleada } from './convocatoria/motor';
+import { cargarLote, resumen as resumenConvocatoria } from './store/invitaciones';
+import { linkWaMe } from './convocatoria/qr';
 
 // ATLAS — tutor educativo por WhatsApp (Universidad Autónoma de Chile).
 // Fase 1: núcleo mínimo tras la limpieza del bot de ventas. El servicio expone:
@@ -83,6 +86,50 @@ app.post('/jobs/recordatorios', requireDashboardToken, async (_req, res) => {
   const plan = await planificar();
   const despacho = await despachar(messagingProvider());
   res.json({ ok: true, plan, despacho });
+});
+
+// ── Convocatoria de cohortes ──
+// Carga del listado a invitar. Idempotente: recargar el mismo archivo no duplica ni reenvía.
+app.post('/jobs/convocatoria/cargar', requireDashboardToken, async (req, res) => {
+  const body = req.body as { lote?: string; entradas?: { telefono: string; nombre?: string }[] };
+  if (!Array.isArray(body?.entradas) || !body.entradas.length) {
+    return res.status(400).json({ ok: false, error: 'falta `entradas`: [{telefono, nombre?}]' });
+  }
+  try {
+    const r = await cargarLote(body.entradas, body.lote?.trim() || new Date().toISOString().slice(0, 10));
+    res.json({ ok: true, ...r });
+  } catch (e) {
+    log.error('convocatoria: carga falló', { err: String(e) });
+    res.status(503).json({ ok: false, error: String(e) });
+  }
+});
+
+// Oleada de invitaciones. Lo dispara Cloud Scheduler; el lock evita que dos corridas se solapen
+// (el reclamo atómico en Postgres es la garantía real de no pagar dos veces la misma plantilla).
+app.post('/jobs/convocatoria', requireDashboardToken, async (_req, res) => {
+  if (!(await once('lock:job:convocatoria', 240))) {
+    return res.status(202).json({ ok: true, skipped: 'job en curso' });
+  }
+  try {
+    const estado = await resumenConvocatoria();
+    const r = await correrOleada(messagingProvider(), estado?.enviadasHoy ?? 0);
+    res.json({ ok: true, ...r, estado });
+  } catch (e) {
+    log.error('convocatoria: oleada falló', { err: String(e) });
+    res.status(503).json({ ok: false, error: String(e) });
+  }
+});
+
+// Estado de la convocatoria + el enlace de entrada gratuita (para imprimir el QR).
+app.get('/jobs/convocatoria', requireDashboardToken, async (_req, res) => {
+  res.json({
+    ok: true,
+    activa: config.convocatoriaActiva,
+    plantilla: config.convocatoriaTemplate || null,
+    cupos: { porCorrida: config.convocatoriaMaxPorCorrida, porDia: config.convocatoriaMaxPorDia },
+    enlaceEntrada: linkWaMe(config.waMeNumero, config.waMeTexto),
+    estado: await resumenConvocatoria(),
+  });
 });
 
 // Inicializa Postgres y el barrido de retención. Fail-fast en producción: sin la fuente de

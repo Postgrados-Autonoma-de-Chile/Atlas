@@ -2,7 +2,7 @@
 
 Proyecto de la **Universidad Autónoma de Chile**. Un tutor conversacional que acompaña a estudiantes de cursos de formación por WhatsApp: entrega las clases en microcápsulas, resuelve dudas con RAG sobre el material oficial del curso, evalúa para enseñar, recuerda el progreso, retoma a quien abandona y gestiona la certificación.
 
-**Estado: Fases 1 a 14 implementadas.** 118 tests en verde, typecheck limpio. El código está listo; lo que falta para el piloto es operacional (número de WhatsApp, credenciales, despliegue) y está detallado en [§14](#14-lo-que-falta-para-el-piloto).
+**Estado: Fases 1 a 14 implementadas**, más la convocatoria de cohortes. 130 tests en verde, typecheck limpio. El código está listo; lo que falta para el piloto es operacional (número de WhatsApp, credenciales, despliegue) y está detallado en [§14](#14-lo-que-falta-para-el-piloto).
 
 > Este repositorio nació como un chatbot comercial omnicanal sobre Bitrix24. En la Fase 1 se eliminó toda la lógica de ventas y se conservó el núcleo conversacional, que estaba probado en producción. La baja operacional del sistema anterior es un proceso aparte: [`docs/DECOMISO-VENTAS.md`](docs/DECOMISO-VENTAS.md).
 
@@ -65,7 +65,7 @@ Cada flujo determinista que consume el mensaje corta el pipeline: el motor no co
 
 ```
 src/
-├── index.ts                  # bootstrap Express: 7 endpoints, arranque de BD y barridos
+├── index.ts                  # bootstrap Express: 10 endpoints, arranque de BD y barridos
 ├── config.ts                 # configuración central validada con zod (fail-fast)
 ├── log.ts                    # logger JSON estructurado
 ├── ai/
@@ -92,6 +92,9 @@ src/
 │   ├── chunker.ts            # troceado del material del curso
 │   └── retrieval.ts          # búsqueda vectorial con umbral + fallback léxico
 ├── reminders/motor.ts        # planificar + despachar, con dedupe fail-closed
+├── convocatoria/
+│   ├── motor.ts              # oleadas de invitación con cupo y reclamo atómico
+│   └── qr.ts                 # enlace wa.me con texto precargado (la vía gratuita)
 ├── cert/
 │   ├── pdf.ts                # generación del certificado con pdf-lib
 │   └── mailer.ts             # envío SMTP
@@ -103,6 +106,7 @@ src/
 │   ├── evaluaciones.ts       # quizzes, intentos, respuestas
 │   ├── recordatorios.ts      # cola de recordatorios con estados
 │   ├── certificados.ts       # emisión y folios
+│   ├── invitaciones.ts       # cola de convocatoria
 │   ├── metricasNegocio.ts    # agregaciones §20 para /metrics
 │   └── tokenCrypto.ts        # AES-256-GCM para PII en reposo
 ├── routes/
@@ -114,20 +118,20 @@ src/
 ├── util/                     # semáforo, locks in-process y distribuido, comparación timing-safe
 └── eval/juez.ts              # juez LLM del harness pedagógico
 
-migrations/                   # 9 migraciones node-pg-migrate (.cjs)
+migrations/                   # 10 migraciones node-pg-migrate (.cjs)
 infra/                        # Terraform del piloto GCP
 perf/                         # carga con k6 (firma HMAC real) + verificador de invariantes
 eval/golden-set.json          # casos de referencia del harness pedagógico
 contenido/                    # material del curso del piloto
 docs/                         # DEPLOY · SEGURIDAD · OBSERVABILIDAD · DECOMISO-VENTAS · specs/
-test/                         # 24 archivos, 118 tests
+test/                         # 25 archivos, 130 tests
 ```
 
 ---
 
 ## 4. Modelo de datos
 
-18 tablas en 9 migraciones. El avance académico vive en Postgres y **no** en Redis: quien vuelve tres semanas después retoma exactamente donde quedó.
+19 tablas en 10 migraciones. El avance académico vive en Postgres y **no** en Redis: quien vuelve tres semanas después retoma exactamente donde quedó.
 
 | Migración | Tablas | Para qué |
 |---|---|---|
@@ -140,8 +144,17 @@ test/                         # 24 archivos, 118 tests
 | `0007` | — | Semilla del quiz de la propuesta 1 |
 | `0008` | `reminder` | Cola de recordatorios con `clave_dedupe UNIQUE` |
 | `0009` | `certificate` | Certificados con folio |
+| `0010` | `invitation` | Convocatoria de cohortes (sin FK a `person`: invita a quien aún no existe) |
 
-**El contenido del piloto** es *Nivel Inicial — Alfabetización ciudadana en IA*, sembrado como **tres propuestas** de curso (`NIVEL-INICIAL-P1`, `P2`, `P3`) de **8 microcápsulas cada una** más un producto de cierre — 24 lecciones en total. La P1, "IA en la vida cotidiana", va desde "¿Qué es la inteligencia artificial?" hasta un checklist de uso responsable. El material vive en [`contenido/`](contenido/); las transcripciones se cargan como `content_item` y de ahí las trocea el RAG.
+**El contenido del piloto** es *Nivel Inicial — Alfabetización ciudadana en IA*, sembrado como **tres propuestas** de curso, cada una con **9 lecciones** (8 microcápsulas más el producto de cierre) — 27 en total:
+
+| Código | Nombre |
+|---|---|
+| `NIVEL-INICIAL-P1` | IA en la vida cotidiana |
+| `NIVEL-INICIAL-P2` | IA para resolver problemas diarios |
+| `NIVEL-INICIAL-P3` | IA, ciudadanía digital y uso responsable |
+
+Los cursos nacen en estado `inactivo`: hay que activarlos explícitamente. El material vive en [`contenido/`](contenido/); las transcripciones se cargan como `content_item` y de ahí las trocea el RAG.
 
 ---
 
@@ -156,6 +169,9 @@ test/                         # 24 archivos, 118 tests
 | `POST` | `/webhooks/whatsapp` | HMAC `X-Hub-Signature-256` + rate limit estricto | Recepción de mensajes |
 | `POST` | `/pubsub/turnos` | OIDC del push (fail-closed) | Worker: consume turnos de la cola |
 | `POST` | `/jobs/recordatorios` | `x-dashboard-token` | Job de recordatorios (Cloud Scheduler) |
+| `POST` | `/jobs/convocatoria/cargar` | `x-dashboard-token` | Carga el listado a invitar (idempotente) |
+| `POST` | `/jobs/convocatoria` | `x-dashboard-token` | Oleada de invitaciones (Cloud Scheduler) |
+| `GET` | `/jobs/convocatoria` | `x-dashboard-token` | Estado de la cola y enlace de entrada para el QR |
 
 ---
 
@@ -202,6 +218,23 @@ Dos etapas idempotentes que dispara Cloud Scheduler vía `POST /jobs/recordatori
 El opt-out es inmediato y se evalúa **antes** del opt-in, porque "no quiero recordatorios" contiene "quiero recordatorios". Solo se confirma al estudiante lo que efectivamente se persistió. Es obligación de Meta y de la Ley 21.719.
 
 ---
+
+## 8b. Convocatoria de cohortes
+
+Llevar gente **hacia** el tutor. Dos vías, con costos muy distintos:
+
+**El QR / enlace `wa.me` — gratis.** `GET /jobs/convocatoria` devuelve el enlace armado desde `WA_ME_NUMERO` y `WA_ME_TEXTO`, con el texto **precargado**: la persona escanea, WhatsApp se abre con el mensaje escrito y solo aprieta enviar. Ese primer mensaje lo inicia el estudiante, así que no se cobra y no consume el tramo de mensajería de Meta. Es la palanca más rentable de todo el sistema y su código son 20 líneas.
+
+**Las plantillas de invitación — se pagan.** Categoría marketing, entre USD 0,025 y 0,137 por mensaje según país, y sujetas al tramo de Meta (2.000 contactos por 24 h para un negocio verificado, escalando a 10.000 y 100.000 con uso y calidad). Por eso el job viene **apagado** y con cupo por corrida y por día.
+
+La estrategia que sale mejor en costo, plazo y riesgo de calidad es **dejar correr el QR primero** y mandar plantillas solo al remanente. Eso lo materializa `descartarYaRegistradas`, que corre **antes** de gastar: quien ya tiene Persona sale de la cola marcado `descartada`, sin enviarle nada.
+
+FSM de `invitation`: `pendiente → enviada → respondio | fallida | descartada`.
+
+- `telefono UNIQUE` da idempotencia de carga: recargar el mismo listado no duplica ni reenvía. Los números se normalizan a E.164 al cargar, así que un mismo teléfono escrito de tres formas colapsa en una invitación.
+- El reclamo es **atómico en Postgres** antes de enviar: dos réplicas del job no pagan dos veces la misma plantilla.
+- Las **fallidas se reintentan** hasta `CONVOCATORIA_MAX_INTENTOS`, porque un `ok:false` del proveedor es él diciendo que no envió — reintentar no arriesga pagar doble.
+- El webhook marca `respondio` en el **primer mensaje** de cualquier número de la cola, venga del QR o de la plantilla. Deja de estar en la cola aunque todavía no complete el registro.
 
 ## 9. Configuración
 
@@ -277,7 +310,7 @@ Otros scripts:
 
 ## 11. Tests
 
-**118 tests en 24 archivos**, todos en verde. Cubren, entre otros: el bucle del agente con el cliente mockeado, el pipeline de WhatsApp, la verificación de firma, el push de Pub/Sub, los tres flujos deterministas, la validación de identidad, el troceado del RAG, el juez del harness, los recordatorios, el PDF del certificado, y dos suites dedicadas a que los guards y las verificaciones sean **fail-closed** (`failclosed.test.ts`, `seguridad.test.ts`).
+**130 tests en 25 archivos**, todos en verde. Cubren, entre otros: el bucle del agente con el cliente mockeado, el pipeline de WhatsApp, la verificación de firma, el push de Pub/Sub, los tres flujos deterministas, la validación de identidad, el troceado del RAG, el juez del harness, los recordatorios, la convocatoria, el PDF del certificado, y dos suites dedicadas a que los guards y las verificaciones sean **fail-closed** (`failclosed.test.ts`, `seguridad.test.ts`).
 
 ---
 
@@ -312,10 +345,11 @@ Seguridad: PII cifrada en reposo con AES-256-GCM, redacción de PII en logs y au
 
 **Pendientes de código**
 
+
 | Pendiente | Detalle |
 |---|---|
 | **Adaptador BSP** | La costura está lista y la regla arquitectónica es explícita: nada fuera de `src/messaging/` importa Meta/Graph. Pero `WA_PROVIDER` solo acepta `meta` o vacío; agregar Chattigo o Atom es escribir otra implementación de `MessagingProvider` y extender ese enum |
-| **Convocatoria** | No existe forma de invitar a una cohorte. Los recordatorios apuntan a estudiantes ya registrados; una invitación va a quien todavía no existe en la base. Faltan la carga del listado, las oleadas con cupo diario, y el link `wa.me` con QR y texto precargado (que es lo que convierte la conversación en gratuita) |
+| **QR imprimible** | El enlace `wa.me` ya se genera (`GET /jobs/convocatoria`); falta convertirlo en un PNG/SVG para afiches. Cualquier generador sirve mientras tanto |
 | **Fase 15** | Escalabilidad — plan en la auditoría §13 |
 | **Feriados** | Lista fija de cuatro fechas en `reminders/motor.ts`; conviene externalizarla |
 
