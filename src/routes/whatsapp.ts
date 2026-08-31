@@ -14,9 +14,13 @@ import { TUTOR_WHATSAPP_PROFILE } from '../core/channel';
 import { getRequestContext, runWithRequestContext } from '../obs/requestContext';
 import { messagingProvider, normalizarEntrante } from '../messaging';
 import type { InboundMessage, MessagingProvider } from '../messaging';
-import { manejarRegistro } from '../flows/registro';
+import { manejarRegistro, CONSENT_VERSION } from '../flows/registro';
 import { manejarEvaluacion } from '../flows/evaluacion';
 import { contextoAcademico } from '../store/cursos';
+import { registrarOptOut } from '../store/personas';
+import { cancelarDePersona, marcarFallidoPorWamid } from '../store/recordatorios';
+import { esOptOutRecordatorios } from '../reminders/motor';
+import { setJson } from '../store/kv';
 
 // Canal WhatsApp Cloud API (Fase 10a): webhook → normalización → dedupe → lock por conversación →
 // motor del tutor → respuesta por el MessagingProvider.
@@ -73,7 +77,10 @@ export function metaWebhook(req: Request, res: Response) {
 
   for (const s of evento.statuses) {
     inc(`wa:status:${s.status}`);
-    if (s.status === 'failed') log.warn('whatsapp: mensaje saliente falló', { waMessageId: s.waMessageId, errorCode: s.errorCode });
+    if (s.status === 'failed') {
+      log.warn('whatsapp: mensaje saliente falló', { waMessageId: s.waMessageId, errorCode: s.errorCode });
+      void marcarFallidoPorWamid(s.waMessageId).catch(() => {}); // recordatorio no entregado (F9)
+    }
   }
 
   for (const msg of evento.messages) {
@@ -142,6 +149,10 @@ export async function procesarMensajeEntrante(msg: InboundMessage, provider: Mes
   }
   inc('inbound');
 
+  // Ventana de servicio de 24h de WhatsApp: registrar la última entrada del estudiante permite a
+  // los recordatorios (F9) elegir texto libre (gratis) vs plantilla utility.
+  void setJson(`ult_in:${msg.from}`, { t: Date.now() }, 25 * 3600).catch(() => {});
+
   // Marcar como leído (check azul) — mejora la experiencia; no crítico.
   void provider.marcarLeido(msg.waMessageId).catch(() => {});
 
@@ -150,6 +161,16 @@ export async function procesarMensajeEntrante(msg: InboundMessage, provider: Mes
   const registro = await manejarRegistro(msg, provider);
   if (registro.handled) return;
   const persona = registro.persona ?? null;
+
+  // Opt-out de recordatorios (F9): efectivo e inmediato — persiste el consentimiento negativo y
+  // cancela los programados (obligación de Meta y de la Ley 21.719).
+  if (persona && msg.type === 'text' && esOptOutRecordatorios(msg.text ?? '')) {
+    await registrarOptOut(persona.id, CONSENT_VERSION);
+    await cancelarDePersona(persona.id);
+    await provider.enviarTexto(msg.from, 'Listo ✅ No te enviaré más recordatorios. Puedes reactivarlos cuando quieras diciéndome "quiero recordatorios". Tu curso sigue disponible: escribe *continuar* cuando gustes.');
+    void audit({ type: 'optout_recordatorios', dialogId: msg.from });
+    return;
+  }
 
   // Evaluaciones formativas (F7): interceptor determinista de respuestas de quiz (botones/listas o
   // texto A-D/V-F) ANTES del motor — el parsing y el registro académico jamás se delegan al LLM.

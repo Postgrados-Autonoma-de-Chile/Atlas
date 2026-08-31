@@ -6,9 +6,11 @@ import { runWithRequestContext } from './obs/requestContext';
 import { metaVerify, verifyMetaSignature, metaWebhook } from './routes/whatsapp';
 import { initDb, startRetentionSweep, dbEnabled } from './store/db';
 import { snapshot } from './obs/metrics';
-import { kvKind } from './store/kv';
+import { kvKind, once } from './store/kv';
 import { requireDashboardToken } from './routes/guard';
 import { rateLimit } from './routes/rateLimit';
+import { planificar, despachar } from './reminders/motor';
+import { messagingProvider } from './messaging';
 
 // ATLAS — tutor educativo por WhatsApp (Universidad Autónoma de Chile).
 // Fase 1: núcleo mínimo tras la limpieza del bot de ventas. El servicio expone:
@@ -57,6 +59,18 @@ app.get('/metrics', requireDashboardToken, async (_req, res) => {
 // POST = eventos, con verificación de firma. El procesamiento real llega en Fase 10.
 app.get('/webhooks/whatsapp', metaVerify);
 app.post('/webhooks/whatsapp', strictLimiter, verifyMetaSignature, metaWebhook);
+
+// Job de recordatorios (F9): lo dispara Cloud Scheduler (F11) cada ~15 min con el header del token.
+// Lock distribuido para que réplicas/ejecuciones solapadas no dupliquen trabajo (el dedupe real
+// está en Postgres: clave_dedupe UNIQUE — este lock solo evita trabajo redundante).
+app.post('/jobs/recordatorios', requireDashboardToken, async (_req, res) => {
+  if (!(await once('lock:job:recordatorios', 240))) {
+    return res.status(202).json({ ok: true, skipped: 'job en curso' });
+  }
+  const plan = await planificar();
+  const despacho = await despachar(messagingProvider());
+  res.json({ ok: true, plan, despacho });
+});
 
 // Inicializa Postgres y el barrido de retención. Fail-fast en producción: sin la fuente de
 // verdad (identidad, progreso) el servicio no debe atender tráfico.

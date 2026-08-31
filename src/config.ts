@@ -53,6 +53,15 @@ const Env = z.object({
   MEMORY_TTL_HOURS: z.coerce.number().int().positive().default(48),
   MEMORY_MAX_TURNS: z.coerce.number().int().positive().default(24),
 
+  // ── Recordatorios (F9) ──
+  /** Nombre de la plantilla utility APROBADA por Meta para recordatorios fuera de ventana 24h. */
+  WA_TEMPLATE_RECORDATORIO: z.string().default(''),
+  WA_TEMPLATE_LANG: z.string().default('es'),
+  /** Días de inactividad antes de recordar (y ventana del dedupe: máx. 1 recordatorio cada N días). */
+  REMINDER_DIAS_INACTIVIDAD: z.coerce.number().int().positive().default(3),
+  /** Tope de recordatorios sin nueva actividad del estudiante (luego se deja de insistir). */
+  REMINDER_MAX_SIN_ACTIVIDAD: z.coerce.number().int().positive().default(3),
+
   // ── RAG (F5): embeddings Gemini + pgvector ──
   GEMINI_API_KEY: z.string().default(''),
   EMBEDDING_MODEL: z.string().default('gemini-embedding-001'),
@@ -123,6 +132,11 @@ export const config = {
 
   memoryTtlHours: env.MEMORY_TTL_HOURS,
   memoryMaxTurns: env.MEMORY_MAX_TURNS,
+
+  waTemplateRecordatorio: env.WA_TEMPLATE_RECORDATORIO,
+  waTemplateLang: env.WA_TEMPLATE_LANG,
+  reminderDiasInactividad: env.REMINDER_DIAS_INACTIVIDAD,
+  reminderMaxSinActividad: env.REMINDER_MAX_SIN_ACTIVIDAD,
 
   geminiApiKey: env.GEMINI_API_KEY,
   embeddingModel: env.EMBEDDING_MODEL,
