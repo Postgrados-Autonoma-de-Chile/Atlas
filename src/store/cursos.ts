@@ -223,6 +223,12 @@ export async function completarLeccionActual(
     const cursoCompletado = !siguiente;
     if (cursoCompletado) {
       await client.query(`UPDATE enrollment SET estado='completada', completado_en=now() WHERE id=$1`, [enr.id]);
+      // La elegibilidad del certificado nace en ESTA misma transacción (F8): hecho persistido.
+      await client.query(
+        `INSERT INTO certificate (enrollment_id, person_id) VALUES ($1,$2)
+         ON CONFLICT (enrollment_id) DO NOTHING`,
+        [enr.id, personId],
+      );
     }
     await client.query('COMMIT');
     return {
@@ -253,7 +259,7 @@ export async function contextoAcademico(personId: string, nombre: string | null)
   }
   const { curso, enrollment, completadas, totalLecciones, proxima } = estado;
   if (enrollment!.estado === 'completada') {
-    return `${quien} Completó el curso "${curso!.nombre}" (${enrollment!.minutosAcumulados} min acumulados). La certificación se habilitará pronto.`;
+    return `${quien} Completó el curso "${curso!.nombre}" (${enrollment!.minutosAcumulados} min acumulados). Puede obtener su certificado escribiendo "certificado" (el sistema conduce el proceso: RUT + verificación de correo).`;
   }
   const prox = proxima ? ` Próxima microcápsula: ${proxima.orden}. "${proxima.titulo}" (~${proxima.duracionMin} min).` : '';
   return `${quien} Curso "${curso!.nombre}": ${completadas}/${totalLecciones} microcápsulas completadas, ${enrollment!.minutosAcumulados} min acumulados.${prox} Si quiere continuar, usa la tool continuar_curso.`;

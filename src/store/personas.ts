@@ -1,6 +1,6 @@
 import { getPool } from './db';
 import { encryptToken, decryptToken } from './tokenCrypto';
-import { hashLookup, normalizarEmail } from '../core/identidad';
+import { hashLookup, normalizarEmail, normalizarRut } from '../core/identidad';
 import { log } from '../log';
 
 // Repositorio de Personas (Fase 3). Escrituras de identidad SIEMPRE transaccionales
@@ -132,3 +132,65 @@ async function registrarConsentRecordatorios(personId: string, version: string, 
 export const registrarOptOut = (personId: string, version: string) => registrarConsentRecordatorios(personId, version, false);
 /** Reactivación prometida en el mensaje de opt-out ("quiero recordatorios") — revisión F9.1. */
 export const registrarOptIn = (personId: string, version: string) => registrarConsentRecordatorios(personId, version, true);
+
+/** ¿La persona ya registró su RUT? (para no volver a pedirlo al certificar). */
+export async function tieneRut(personId: string): Promise<boolean> {
+  const pool = getPool();
+  if (!pool) return false;
+  try {
+    const r = await pool.query(`SELECT rut_enc IS NOT NULL AS tiene FROM person WHERE id=$1`, [personId]);
+    return Boolean(r.rows[0]?.tiene);
+  } catch (e) {
+    log.warn('personas: tieneRut falló', { err: String(e) });
+    return false;
+  }
+}
+
+/**
+ * Guarda el RUT (cifrado en reposo + identidad por hash) para la certificación (Fase 8).
+ * 'rut_en_uso' = ese RUT ya pertenece a OTRA persona — señal de posible suplantación: el flujo
+ * NO certifica y deriva al equipo (integridad académica, riesgo señalado por la auditoría).
+ */
+export async function guardarRut(personId: string, rutCrudo: string): Promise<'ok' | 'rut_en_uso' | 'error'> {
+  const pool = getPool();
+  if (!pool) return 'error';
+  const rut = normalizarRut(rutCrudo);
+  if (!rut) return 'error';
+  const h = hashLookup(rut);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const dueno = await client.query(`SELECT person_id FROM person_identity WHERE tipo='rut' AND valor_lookup=$1`, [h]);
+    if (dueno.rows[0] && dueno.rows[0].person_id !== personId) {
+      await client.query('ROLLBACK');
+      return 'rut_en_uso';
+    }
+    await client.query(`UPDATE person SET rut_enc=$2, updated_at=now() WHERE id=$1`, [personId, encryptToken(rut)]);
+    if (!dueno.rows[0]) {
+      await client.query(
+        `INSERT INTO person_identity (person_id, tipo, valor_lookup, verificado) VALUES ($1,'rut',$2,true)
+         ON CONFLICT ON CONSTRAINT person_identity_unico DO NOTHING`,
+        [personId, h],
+      );
+    }
+    await client.query('COMMIT');
+    return 'ok';
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    log.error('personas: guardarRut falló', { err: String(e) });
+    return 'error';
+  } finally {
+    client.release();
+  }
+}
+
+/** Marca el email como verificado (código de la Fase 8 validado). */
+export async function marcarEmailVerificado(personId: string): Promise<void> {
+  const pool = getPool();
+  if (!pool) return;
+  try {
+    await pool.query(`UPDATE person_identity SET verificado=true WHERE person_id=$1 AND tipo='email'`, [personId]);
+  } catch (e) {
+    log.warn('personas: marcarEmailVerificado falló', { err: String(e) });
+  }
+}

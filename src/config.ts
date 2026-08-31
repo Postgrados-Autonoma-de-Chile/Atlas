@@ -53,6 +53,14 @@ const Env = z.object({
   MEMORY_TTL_HOURS: z.coerce.number().int().positive().default(48),
   MEMORY_MAX_TURNS: z.coerce.number().int().positive().default(24),
 
+  // ── Correo (F8: certificados y códigos de verificación) — SMTP genérico ──
+  SMTP_HOST: z.string().default(''),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_USER: z.string().default(''),
+  SMTP_PASS: z.string().default(''),
+  /** Remitente, p. ej. "ATLAS UAutónoma <atlas@uautonoma.cl>". Sin host/from → correos omitidos (dev). */
+  SMTP_FROM: z.string().default(''),
+
   // ── Recordatorios (F9) ──
   /** Nombre de la plantilla utility APROBADA por Meta para recordatorios fuera de ventana 24h. */
   WA_TEMPLATE_RECORDATORIO: z.string().default(''),
@@ -132,6 +140,12 @@ export const config = {
 
   memoryTtlHours: env.MEMORY_TTL_HOURS,
   memoryMaxTurns: env.MEMORY_MAX_TURNS,
+
+  smtpHost: env.SMTP_HOST,
+  smtpPort: env.SMTP_PORT,
+  smtpUser: env.SMTP_USER,
+  smtpPass: env.SMTP_PASS,
+  smtpFrom: env.SMTP_FROM,
 
   waTemplateRecordatorio: env.WA_TEMPLATE_RECORDATORIO,
   waTemplateLang: env.WA_TEMPLATE_LANG,

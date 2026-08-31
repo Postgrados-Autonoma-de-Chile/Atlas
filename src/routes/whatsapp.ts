@@ -16,6 +16,7 @@ import { messagingProvider, normalizarEntrante } from '../messaging';
 import type { InboundMessage, MessagingProvider } from '../messaging';
 import { manejarRegistro, CONSENT_VERSION } from '../flows/registro';
 import { manejarEvaluacion } from '../flows/evaluacion';
+import { manejarCertificacion } from '../flows/certificacion';
 import { contextoAcademico } from '../store/cursos';
 import { registrarOptOut, registrarOptIn } from '../store/personas';
 import { cancelarDePersona, marcarFallidoPorWamid } from '../store/recordatorios';
@@ -197,6 +198,11 @@ export async function procesarMensajeEntrante(msg: InboundMessage, provider: Mes
   // texto A-D/V-F) ANTES del motor — el parsing y el registro académico jamás se delegan al LLM.
   const evaluacion = await manejarEvaluacion(msg, persona, provider);
   if (evaluacion.handled) return;
+
+  // Certificación (F8): interceptor determinista — RUT, verificación de correo y emisión jamás
+  // pasan por el LLM.
+  const certificacion = await manejarCertificacion(msg, persona, provider);
+  if (certificacion.handled) return;
 
   const t0 = Date.now();
   const contenido = await contenidoDelTurno(msg, provider);

@@ -103,7 +103,7 @@ export async function executeTool(name: string, _input: unknown, ctx?: AgentCont
             ? { quizDisponible: true, instruccionQuiz: 'Ofrece el mini-quiz de práctica de esta microcápsula (sin nota): dile que responda "sí" o escriba "quiz" cuando quiera. NO formules tú las preguntas: el sistema conduce el quiz automáticamente.' }
             : {}),
           ...(r.cursoCompletado
-            ? { mensaje: 'Felicita al estudiante: terminó todas las microcápsulas. La certificación se habilitará pronto (no prometas fechas).' }
+            ? { mensaje: 'Felicita al estudiante: terminó todas las microcápsulas. Ya puede obtener su certificado: dile que escriba *certificado* y el sistema lo guiará (RUT + verificación de correo). NO conduzcas tú ese proceso ni pidas el RUT.' }
             : {}),
         };
       }

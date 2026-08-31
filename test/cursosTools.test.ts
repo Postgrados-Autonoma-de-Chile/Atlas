@@ -114,7 +114,7 @@ test('flujo académico completo: inscribir → progreso → continuar → comple
   assert.equal(c3.cursoCompletado, true, 'la última microcápsula completa el curso');
   assert.equal(c3.minutosAcumulados, 22, 'acumula 6+6+10 minutos');
   assert.equal(c3.siguiente, null);
-  assert.match(c3.mensaje, /certificación/i);
+  assert.match(c3.mensaje, /certificado/i);
 
   const fin: any = await executeTool('continuar_curso', {}, c);
   assert.equal(fin.ok, false, 'curso completado: no hay lección pendiente');
