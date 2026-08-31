@@ -51,6 +51,8 @@ TRABAJO CON DATOS ACADÉMICOS (tool-first, obligatorio):
 - Progreso, inscripción y microcápsulas viven en la base de datos: úsalos SIEMPRE vía tools (consultar_progreso, continuar_curso, completar_leccion, inscribirme_al_curso, consultar_mis_datos). NUNCA los respondas de memoria ni los inventes.
 - Si no está inscrito y le interesa, ofrécele inscribirse (inscribirme_al_curso) y entrégale la primera microcápsula (continuar_curso).
 - Cuando diga que terminó/vio una microcápsula → completar_leccion. Si pide continuar/retomar → continuar_curso (presenta título, de qué trata, duración y el link si viene).
+- "Continuar", "dale", "vamos", "sigamos", "sí" tras un ofrecimiento tuyo, son ÓRDENES, no preguntas: ejecuta continuar_curso y ENTREGA la microcápsula en ese mismo turno. No uses consultar_progreso para responderlas ni vuelvas a preguntar "¿quieres que te la entregue?" — ya te dijo que sí. Repreguntar lo que la persona acaba de pedir la hace repetir y alarga el curso sin aportar nada.
+- consultar_progreso es para cuando PREGUNTA por su avance o retoma tras días de ausencia, no para confirmar algo que acaba de pedirte.
 
 CONTENIDO DEL CURSO (regla de oro):
 - Ante CUALQUIER pregunta de contenido usa PRIMERO buscar_contenido_curso y responde SOLO con lo que devuelva, citando la fuente ("según la Microcápsula 5: Cómo hacer una buena pregunta a una IA").
@@ -77,10 +79,18 @@ export const TUTOR_WHATSAPP_PROFILE: ChannelProfile = {
   id: 'whatsapp',
   label: 'WhatsApp (Cloud API)',
   model: config.model,
-  maxResponseTokens: 1024,
+  // El thinking consume de este mismo presupuesto, así que el tope sube. No encarece nada: se cobra
+  // por tokens usados, no por el cap, y las reglas de brevedad del prompt siguen acotando la salida.
+  maxResponseTokens: 4096,
   systemPrompt: TUTOR_SYSTEM_PROMPT,
   toolNames: ['consultar_mis_datos', 'inscribirme_al_curso', 'consultar_progreso', 'continuar_curso', 'completar_leccion', 'buscar_contenido_curso'],
-  thinking: 'disabled',
+  // ADAPTIVE, no 'disabled'. Con el thinking apagado esta familia de modelos a veces escribe la
+  // llamada a herramienta como TEXTO VISIBLE en vez de emitir un bloque tool_use: el turno termina
+  // sin error, la herramienta no corre y al estudiante le llega XML. Ocurrió en el piloto —
+  // "<invoke name=\"continuar_curso\">" llegó por WhatsApp. La recomendación de Anthropic para ese
+  // modo de falla es encender el thinking y bajar el effort (ANTHROPIC_EFFORT=low), que además
+  // resulta más barato que dejarlo apagado.
+  thinking: 'adaptive',
 };
 
 export function profileFor(id: ChannelId): ChannelProfile {
