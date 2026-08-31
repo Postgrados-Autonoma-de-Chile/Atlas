@@ -16,7 +16,10 @@ exports.up = (pgm) => {
     codigo_verificacion: { type: 'text' },
   });
   // Se rellena al emitir; las filas ya emitidas (el piloto tiene una) reciben el suyo aquí.
-  pgm.sql(`UPDATE certificate SET codigo_verificacion = encode(gen_random_bytes(8), 'hex') WHERE folio IS NOT NULL AND codigo_verificacion IS NULL`);
+  // gen_random_uuid() y no gen_random_bytes(): pgcrypto NO está instalado en esta base (solo
+  // plpgsql y vector), mientras que gen_random_uuid es núcleo desde PostgreSQL 13 y ya la usa el
+  // resto del esquema. Se toman 16 de sus 32 hex = los mismos 64 bits.
+  pgm.sql(`UPDATE certificate SET codigo_verificacion = substring(replace(gen_random_uuid()::text, '-', '') from 1 for 16) WHERE folio IS NOT NULL AND codigo_verificacion IS NULL`);
   pgm.createIndex('certificate', ['folio', 'codigo_verificacion']);
 };
 

@@ -61,7 +61,7 @@ export async function emitir(id: string): Promise<Emision | null> {
       `UPDATE certificate
        SET estado='emitido', emitido_en=now(),
            folio='ATLAS-' || to_char(now(),'YYYY') || '-' || lpad(nextval('certificate_folio_seq')::text, 4, '0'),
-           codigo_verificacion=encode(gen_random_bytes(8), 'hex')
+           codigo_verificacion=substring(replace(gen_random_uuid()::text, '-', '') from 1 for 16)
        WHERE id=$1 AND estado IN ('elegible','datos_pendientes')
        RETURNING folio, codigo_verificacion`,
       [id],
