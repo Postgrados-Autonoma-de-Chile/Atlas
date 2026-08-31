@@ -22,7 +22,7 @@
     "express": "^4.21.2",
     "google-auth-library": "^9.15.1",
     "ioredis": "^5.4.2",
-    "nodemailer": "^6.10.1",
+    "nodemailer": "^9.1.0",
     "pdf-lib": "^1.17.1",
     "pg": "^8.13.1",
     "tsx": "^4.19.2",
