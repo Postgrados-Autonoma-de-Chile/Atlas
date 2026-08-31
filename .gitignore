@@ -8,3 +8,6 @@ dist/
 .DS_Store
 .claude/
 dist
+
+# Salidas del harness pedagógico: se generan una por corrida (npm run eval:tutor).
+eval/resultados-*.json
