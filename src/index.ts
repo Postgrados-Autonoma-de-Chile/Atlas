@@ -5,7 +5,8 @@ import { log } from './log';
 import { runWithRequestContext } from './obs/requestContext';
 import { metaVerify, verifyMetaSignature, metaWebhook } from './routes/whatsapp';
 import { initDb, startRetentionSweep, dbEnabled } from './store/db';
-import { snapshot } from './obs/metrics';
+import { snapshot, costoEstimadoUsd } from './obs/metrics';
+import { dbResumenNegocio } from './store/metricasNegocio';
 import { kvKind, once } from './store/kv';
 import { requireDashboardToken } from './routes/guard';
 import { rateLimit } from './routes/rateLimit';
@@ -50,10 +51,17 @@ app.get('/health', (_req, res) =>
   res.json({ ok: true, kv: kvKind, db: dbEnabled() ? 'postgres' : 'off', t: new Date().toISOString() }),
 );
 
-// Observabilidad: métricas agregadas (JSON), protegidas por header x-dashboard-token.
+// Observabilidad (F13): técnicas (contadores/latencia/tokens vía Redis) + NEGOCIO (§20, desde las
+// tablas reales) + costo LLM estimado. Protegido por header x-dashboard-token.
 app.get('/metrics', requireDashboardToken, async (_req, res) => {
-  const s = await snapshot();
-  res.json({ ...s, kv: kvKind, db: dbEnabled() ? 'postgres' : 'off' });
+  const [s, negocio] = await Promise.all([snapshot(), dbResumenNegocio()]);
+  res.json({
+    ...s,
+    kv: kvKind,
+    db: dbEnabled() ? 'postgres' : 'off',
+    costoLlmUsd: costoEstimadoUsd(s.counters, config.preciosLlm),
+    negocio,
+  });
 });
 
 // Webhook de WhatsApp Cloud API: GET = handshake de verificación (Meta lo llama al suscribir);

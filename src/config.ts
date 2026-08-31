@@ -20,6 +20,11 @@ const Env = z.object({
   ANTHROPIC_EFFORT: z.enum(['low', 'medium', 'high']).default('low'),
   ANTHROPIC_TIMEOUT_MS: z.coerce.number().int().positive().default(45_000),
   ANTHROPIC_MAX_RETRIES: z.coerce.number().int().min(0).default(2),
+  /** Precios USD/MTok para el costo estimado en /metrics (default: Sonnet 5). */
+  LLM_USD_IN: z.coerce.number().min(0).default(2),
+  LLM_USD_OUT: z.coerce.number().min(0).default(10),
+  LLM_USD_CACHE_WRITE: z.coerce.number().min(0).default(2.5),
+  LLM_USD_CACHE_READ: z.coerce.number().min(0).default(0.2),
 
   // ── STT (notas de voz) ──
   DEEPGRAM_API_KEY: z.string().default(''),
@@ -134,6 +139,12 @@ export const config = {
   llmEffort: env.ANTHROPIC_EFFORT,
   anthropicTimeoutMs: env.ANTHROPIC_TIMEOUT_MS,
   anthropicMaxRetries: env.ANTHROPIC_MAX_RETRIES,
+  preciosLlm: {
+    inUsd: env.LLM_USD_IN,
+    outUsd: env.LLM_USD_OUT,
+    cacheWriteUsd: env.LLM_USD_CACHE_WRITE,
+    cacheReadUsd: env.LLM_USD_CACHE_READ,
+  },
 
   deepgramApiKey: env.DEEPGRAM_API_KEY,
   deepgramModel: env.DEEPGRAM_MODEL,
