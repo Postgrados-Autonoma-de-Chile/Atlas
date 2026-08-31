@@ -7,7 +7,7 @@ import { metaVerify, verifyMetaSignature, metaWebhook } from './routes/whatsapp'
 import { initDb, startRetentionSweep, dbEnabled } from './store/db';
 import { snapshot, costoEstimadoUsd } from './obs/metrics';
 import { dbResumenNegocio } from './store/metricasNegocio';
-import { kvKind, once } from './store/kv';
+import { kvKind, kvVivo, once } from './store/kv';
 import { requireDashboardToken } from './routes/guard';
 import { rateLimit } from './routes/rateLimit';
 import { planificar, despachar } from './reminders/motor';
@@ -50,9 +50,17 @@ app.get('/', (_req, res) =>
       `</body>`,
   ),
 );
-app.get('/health', (_req, res) =>
-  res.json({ ok: true, kv: kvKind, db: dbEnabled() ? 'postgres' : 'off', t: new Date().toISOString() }),
-);
+// Healthcheck. Comprueba Redis con un PING real, no solo el nombre del backend: informar "redis"
+// mientras Redis está caído es peor que no tener healthcheck. Devuelve 503 si no responde.
+app.get('/health', async (_req, res) => {
+  const kvOk = await kvVivo();
+  res.status(kvOk ? 200 : 503).json({
+    ok: kvOk,
+    kv: kvOk ? kvKind : `${kvKind}:sin-respuesta`,
+    db: dbEnabled() ? 'postgres' : 'off',
+    t: new Date().toISOString(),
+  });
+});
 
 // Observabilidad (F13): técnicas (contadores/latencia/tokens vía Redis) + NEGOCIO (§20, desde las
 // tablas reales) + costo LLM estimado. Protegido por header x-dashboard-token.

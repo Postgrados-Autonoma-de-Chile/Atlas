@@ -55,7 +55,7 @@ Cada flujo determinista que consume el mensaje corta el pipeline: el motor no co
 | Correo | SMTP genérico (nodemailer) |
 | Cola | Pub/Sub con ordering por estudiante |
 | Config | zod, validada al arrancar |
-| Destino | GCP: Cloud Run (webhook + worker), Cloud SQL, Memorystore, Pub/Sub, Cloud Scheduler, Secret Manager |
+| Destino | GCP: Cloud Run (webhook + worker), Cloud SQL, Redis (Memorystore o VM `e2-micro`), Pub/Sub, Cloud Scheduler, Secret Manager |
 
 **Dos proveedores de IA.** Anthropic para el razonamiento, Google para los embeddings del RAG. Son dos cuentas, dos facturas y dos puntos de falla; la decisión está registrada en la migración `0005`: pgvector en Cloud SQL en vez de Vertex Vector Search, que cuesta ~US$55/mes fijos.
 
