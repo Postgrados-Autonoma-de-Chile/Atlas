@@ -26,6 +26,10 @@ const TTL = 48 * 3600;
 const CODE_TTL = 15 * 60;
 
 const RE_CERT = /\b(certificado|certificarme|certificacion|diploma)\b/;
+/** plano() ya quitó los acentos, así que basta la forma sin tilde. */
+// Prefijo, no lista cerrada: cubre reenviar, reenvíalo, reenvíamelo, reenvíenmelo, reenvío...
+// Solo se evalúa DENTRO de la rama del certificado, así que no puede capturar otros usos.
+const RE_REENVIAR = /\breenvi|\b(de nuevo|otra vez|no me lleg)/;
 const plano = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 const textoDe = (m: InboundMessage) => (m.type === 'text' ? m.text ?? '' : m.type === 'interactive' ? m.interactiveReplyTitle ?? '' : '').trim();
 
@@ -140,7 +144,14 @@ export async function manejarCertificacion(
     const cert = await certificadoDePersona(persona.id);
     if (!cert) return { handled: false }; // sin curso completado: que el tutor explique el avance real
     if (cert.estado === 'enviado') {
-      await provider.enviarTexto(waId, `Tu certificado ya fue emitido y enviado a tu correo ✅ (folio *${cert.folio}*). Si no lo encuentras, revisa spam o avísame para reenviarlo escribiendo *reenviar certificado*.`);
+      // "reenviar certificado" tiene que REENVIAR de verdad. Antes caía aquí igual (contiene la
+      // palabra "certificado") y devolvía este mismo mensaje: la persona quedaba en un bucle,
+      // releyendo la instrucción que acababa de seguir. Le pasa justo a quien perdió el correo.
+      if (RE_REENVIAR.test(plano(texto))) {
+        await emitirYEnviar(cert, persona, provider, waId); // folio y código ya asignados: solo reenvía
+        return { handled: true };
+      }
+      await provider.enviarTexto(waId, `Tu certificado ya fue emitido y enviado a tu correo ✅ (folio *${cert.folio}*). Si no lo encuentras, revisa spam o escribe *reenviar certificado* y te lo mando de nuevo.`);
       return { handled: true };
     }
     if (cert.estado === 'emitido') {

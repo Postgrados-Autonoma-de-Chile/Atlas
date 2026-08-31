@@ -284,3 +284,47 @@ test('un código de 6 dígitos REALMENTE equivocado sí gasta intentos y termina
   assert.match(textos.at(-1)!, /pausa/i, 'tres códigos equivocados sí deben cancelar');
   assert.equal(emailVerificado, false);
 });
+
+// ── Reenvío de un certificado ya enviado ────────────────────────────────────────────────────────
+//
+// El bot dice "escribe *reenviar certificado*" cuando el certificado ya salió. Esa frase contiene
+// la palabra "certificado", así que caía en la misma rama y devolvía EL MISMO mensaje: la persona
+// quedaba releyendo la instrucción que acababa de seguir. Le ocurre justo a quien perdió el correo,
+// que es el único motivo por el que alguien escribiría eso.
+
+test('"reenviar certificado" reenvía de verdad, no repite la instrucción', async () => {
+  reset('enviado');
+  const { p, textos } = fakeProvider();
+  await manejarCertificacion(texto('+56977779001', 'reenviar certificado'), PERSONA, p);
+  assert.equal(correos.length, 1, 'debe salir un correo con el certificado');
+  assert.ok(correos[0].adjuntos?.[0]?.filename?.endsWith('.pdf'), 'con el PDF adjunto');
+  assert.doesNotMatch(textos.at(-1)!, /escribe \*reenviar certificado\*/i, 'no puede devolver la misma instrucción');
+});
+
+test('el reenvío conserva el folio original, no emite uno nuevo', async () => {
+  reset('enviado');
+  const folioOriginal = cert.folio;
+  const { p } = fakeProvider();
+  await manejarCertificacion(texto('+56977779002', 'reenviame el certificado por favor'), PERSONA, p);
+  assert.equal(cert.folio, folioOriginal, 'un reenvío no puede cambiar el folio: ya está impreso y en el QR');
+  assert.match(correos[0].subject, new RegExp(folioOriginal));
+});
+
+test('pedir "certificado" a secas sigue informando, sin reenviar', async () => {
+  reset('enviado');
+  const { p, textos } = fakeProvider();
+  await manejarCertificacion(texto('+56977779003', 'certificado'), PERSONA, p);
+  assert.equal(correos.length, 0, 'sin la palabra reenviar no se manda otro correo');
+  assert.match(textos.at(-1)!, /ya fue emitido/i);
+});
+
+test('el flujo solo intercepta si el mensaje habla del certificado', async () => {
+  // "reenvíamelo" a secas no menciona el certificado: no se intercepta y lo atiende el tutor, que
+  // tiene el contexto de la conversación para saber a qué se refiere. Interceptar cualquier
+  // "reenviar" secuestraría mensajes que no tienen nada que ver.
+  reset('enviado');
+  const { p } = fakeProvider();
+  const r = await manejarCertificacion(texto('+56977779004', 'reenvíamelo por favor'), PERSONA, p);
+  assert.equal(r.handled, false);
+  assert.equal(correos.length, 0);
+});
