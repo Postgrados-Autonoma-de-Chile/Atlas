@@ -8,6 +8,7 @@ import { initDb, startRetentionSweep, dbEnabled } from './store/db';
 import { snapshot, costoEstimadoUsd } from './obs/metrics';
 import { dbResumenNegocio } from './store/metricasNegocio';
 import { kvKind, kvVivo, once } from './store/kv';
+import { verificarPorFolio } from './store/certificados';
 import { requireDashboardToken } from './routes/guard';
 import { rateLimit } from './routes/rateLimit';
 import { planificar, despachar } from './reminders/motor';
@@ -50,6 +51,49 @@ app.get('/', (_req, res) =>
       `</body>`,
   ),
 );
+// Verificación pública de un certificado: destino del QR impreso y del certUrl que LinkedIn exige
+// para "Agregar a mi perfil". Es la ÚNICA ruta sin autenticación que consulta la base, así que va
+// con el limitador estricto y devuelve lo mínimo: nombre, curso, fecha y folio.
+//
+// Exige folio Y código. El folio es secuencial (ATLAS-2026-0001, 0002, ...): resolver solo por folio
+// dejaría recorrer la cohorte entera y extraer el nombre y el curso de cada estudiante. Ante
+// cualquier discrepancia responde 404 sin distinguir "no existe" de "código incorrecto" — esa
+// distinción sería, ella misma, un oráculo para enumerar.
+const escapar = (t: string) =>
+  String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+
+const paginaVerificacion = (cuerpo: string) =>
+  `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
+  `<title>Verificación de certificado — Universidad Autónoma de Chile</title>` +
+  `<body style="font-family:system-ui,sans-serif;margin:0;padding:2rem;background:#f6f7f9;color:#1a1a1a">` +
+  `<div style="max-width:34rem;margin:0 auto;background:#fff;border-radius:12px;padding:2rem;box-shadow:0 1px 3px rgba(0,0,0,.12)">` +
+  cuerpo +
+  `<p style="margin-top:2rem;font-size:.8rem;color:#667">Universidad Autónoma de Chile — ATLAS</p>` +
+  `</div></body>`;
+
+app.get('/verificar/:folio', strictLimiter, async (req, res) => {
+  const cert = await verificarPorFolio(String(req.params.folio ?? ''), String(req.query.c ?? ''));
+  // Nunca se indexa: es una página con el nombre de una persona.
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  if (!cert) {
+    return res.status(404).send(paginaVerificacion(
+      `<h1 style="margin:0 0 .5rem;font-size:1.3rem;color:#b3261e">Certificado no encontrado</h1>` +
+      `<p style="color:#444">El enlace no corresponde a ningún certificado vigente. Verifica que esté completo, ` +
+      `incluida la parte posterior al signo de interrogación.</p>`,
+    ));
+  }
+  const fecha = cert.emitidoEn.toLocaleDateString('es-CL', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'America/Santiago' });
+  res.send(paginaVerificacion(
+    `<p style="margin:0;color:#0f7b3f;font-weight:600">✓ Certificado válido</p>` +
+    `<h1 style="margin:.4rem 0 1.2rem;font-size:1.6rem">${escapar(cert.nombre)}</h1>` +
+    `<p style="margin:.2rem 0;color:#444">completó el curso</p>` +
+    `<p style="margin:.2rem 0 1.2rem;font-size:1.15rem;font-weight:600;color:#273473">${escapar(cert.curso)}</p>` +
+    `<p style="margin:.2rem 0;color:#444">${cert.minutos} minutos de formación certificada</p>` +
+    `<p style="margin:.2rem 0;color:#444">Emitido el ${escapar(fecha)}</p>` +
+    `<p style="margin:1.2rem 0 0;font-family:ui-monospace,monospace;color:#667">Folio ${escapar(cert.folio)}</p>`,
+  ));
+});
+
 // Healthcheck. Comprueba Redis con un PING real, no solo el nombre del backend: informar "redis"
 // mientras Redis está caído es peor que no tener healthcheck. Devuelve 503 si no responde.
 app.get('/health', async (_req, res) => {

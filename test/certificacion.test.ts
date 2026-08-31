@@ -26,8 +26,9 @@ mock.module('../src/store/certificados.ts', {
       if (cert.estado === 'elegible' || cert.estado === 'datos_pendientes') {
         cert.estado = 'emitido';
         cert.folio = 'ATLAS-2026-0001';
+        cert.codigo = 'a1b2c3d4e5f60718';
       }
-      return cert.folio ?? null;
+      return cert.folio ? { folio: cert.folio, codigo: cert.codigo ?? '' } : null;
     },
     marcarEnviado: async () => { if (cert?.estado === 'emitido') cert.estado = 'enviado'; },
   },
@@ -76,7 +77,7 @@ const boton = (from: string, id: string, titulo: string): InboundMessage => ({ w
 const PERSONA = { id: 'p1', nombre: 'Rodrigo', apellido: 'Palma', email: 'rodrigo.palma@uautonoma.cl', emailVerificado: false } as any;
 
 const reset = (estadoCert: string | null = 'elegible') => {
-  cert = estadoCert ? { id: 'cert1', estado: estadoCert, folio: estadoCert === 'enviado' ? 'ATLAS-2026-0009' : null, cursoNombre: 'IA en la vida cotidiana', minutos: 58 } : null;
+  cert = estadoCert ? { id: 'cert1', estado: estadoCert, folio: estadoCert === 'enviado' ? 'ATLAS-2026-0009' : null, codigo: estadoCert === 'enviado' ? 'ffffffffffffffff' : null, cursoNombre: 'IA en la vida cotidiana', minutos: 58 } : null;
   rutResultado = 'ok';
   tieneRutFlag = false;
   emailVerificado = false;

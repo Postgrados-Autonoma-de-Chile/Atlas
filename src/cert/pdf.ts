@@ -1,5 +1,6 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { LOGO_ALTO, LOGO_ANCHO, LOGO_COLOR, LOGO_RELLENOS, LOGO_TRAZOS } from './logoUa';
+import { dibujarQr } from './qr';
 
 // Generación del certificado del piloto (Fase 8): PDF A4 apaisado, simple y verificable por folio.
 // Cuando la Universidad conecte su sistema institucional (folios/firmas propias), esta función se
@@ -11,6 +12,8 @@ export type DatosCertificado = {
   minutos: number;
   folio: string;
   fecha: Date;
+  /** URL pública de verificación. Sin ella NO se dibuja el QR (ver abajo). */
+  urlVerificacion?: string;
 };
 
 export async function generarCertificadoPdf(d: DatosCertificado): Promise<Buffer> {
@@ -56,6 +59,17 @@ export async function generarCertificadoPdf(d: DatosCertificado): Promise<Buffer
   centrar(`Emitido el ${fecha}`, 150, normal, 12);
   centrar(`Folio de verificación: ${d.folio}`, 128, bold, 12, gris);
   centrar('Documento generado electrónicamente por ATLAS, tutor virtual de la Universidad Autónoma de Chile.', 78, normal, 9);
+
+  // QR de verificación, abajo a la izquierda (zona libre: los textos centrados no llegan hasta acá).
+  // Se dibuja SOLO si hay URL. Un QR que no lleva a ninguna parte le daría al documento una
+  // apariencia de verificable que no tiene, que es peor que no ponerlo.
+  if (d.urlVerificacion) {
+    const lado = 84;
+    const qx = 64;
+    const qy = 64;
+    dibujarQr(page, d.urlVerificacion, { x: qx, y: qy, lado, color: azul });
+    page.drawText('Escanea para verificar', { x: qx, y: qy + lado + 8, size: 8, font: normal, color: gris });
+  }
 
   return Buffer.from(await doc.save());
 }

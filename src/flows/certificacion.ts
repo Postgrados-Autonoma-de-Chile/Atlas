@@ -7,6 +7,7 @@ import { validarRut, normalizarRut } from '../core/identidad';
 import { generarCertificadoPdf } from '../cert/pdf';
 import { enviarCorreo } from '../cert/mailer';
 import { audit } from '../obs/audit';
+import { config } from '../config';
 import { log } from '../log';
 import type { InboundMessage, MessagingProvider } from '../messaging/types';
 
@@ -53,23 +54,58 @@ async function enviarCodigo(persona: Persona, provider: MessagingProvider, waId:
   return true;
 }
 
+/**
+ * Enlace "Agregar a mi perfil" de LinkedIn. Es un formulario prellenado de LinkedIn (no una API):
+ * abre el perfil de la persona con los campos de la certificación ya completos, y ella confirma.
+ * Requiere certUrl público — de ahí que dependa de la misma página de verificación que el QR.
+ */
+export function enlaceLinkedIn(curso: string, folio: string, urlVerificacion: string, fecha: Date): string {
+  const q = new URLSearchParams({
+    startTask: 'CERTIFICATION_NAME',
+    name: curso,
+    organizationName: 'Universidad Autónoma de Chile',
+    issueYear: String(fecha.getFullYear()),
+    issueMonth: String(fecha.getMonth() + 1),
+    certUrl: urlVerificacion,
+    certId: folio,
+  });
+  return `https://www.linkedin.com/profile/add?${q.toString()}`;
+}
+
 /** Emite + envía el certificado. Devuelve true si el correo salió. */
 async function emitirYEnviar(cert: Certificado, persona: Persona, provider: MessagingProvider, waId: string): Promise<void> {
-  const folio = await emitir(cert.id);
-  if (!folio) {
+  const emision = await emitir(cert.id);
+  if (!emision) {
     await provider.enviarTexto(waId, 'Tuve un problema técnico emitiendo tu certificado 😕 Inténtalo de nuevo en unos minutos escribiendo *certificado*.');
     return;
   }
+  const { folio, codigo } = emision;
   void audit({ type: 'certificado_emitido', dialogId: waId, detail: { folio } });
 
   const nombre = [persona.nombre, persona.apellido].filter(Boolean).join(' ') || 'Estudiante';
+  const fecha = new Date();
+  // Sin BASE_URL no hay a dónde apuntar: se omiten el QR y el botón de LinkedIn en vez de generar
+  // enlaces rotos en un documento que la persona va a mostrarle a un empleador.
+  const urlVerificacion = config.baseUrl && codigo
+    ? `${config.baseUrl}/verificar/${encodeURIComponent(folio)}?c=${encodeURIComponent(codigo)}`
+    : undefined;
   let enviado = false;
   try {
-    const pdf = await generarCertificadoPdf({ nombreCompleto: nombre, curso: cert.cursoNombre, minutos: cert.minutos, folio, fecha: new Date() });
+    const pdf = await generarCertificadoPdf({ nombreCompleto: nombre, curso: cert.cursoNombre, minutos: cert.minutos, folio, fecha, urlVerificacion });
     const correo = await enviarCorreo({
       to: persona.email ?? '',
       subject: `Tu certificado — ${cert.cursoNombre} (folio ${folio})`,
-      html: `<p>Hola ${persona.nombre ?? ''},</p><p>¡Felicitaciones! 🎉 Completaste el curso <b>${cert.cursoNombre}</b>.</p><p>Adjuntamos tu certificado (folio <b>${folio}</b>).</p><p>— ATLAS, Universidad Autónoma de Chile</p>`,
+      html:
+        `<p>Hola ${persona.nombre ?? ''},</p>` +
+        `<p>¡Felicitaciones! 🎉 Completaste el curso <b>${cert.cursoNombre}</b>.</p>` +
+        `<p>Adjuntamos tu certificado (folio <b>${folio}</b>).</p>` +
+        (urlVerificacion
+          ? `<p>Puedes verificar su validez en cualquier momento aquí:<br><a href="${urlVerificacion}">${urlVerificacion}</a></p>` +
+            `<p><a href="${enlaceLinkedIn(cert.cursoNombre, folio, urlVerificacion, fecha)}" ` +
+            `style="display:inline-block;padding:10px 18px;background:#0a66c2;color:#fff;text-decoration:none;border-radius:4px">` +
+            `Agregar a mi perfil de LinkedIn</a></p>`
+          : '') +
+        `<p>— ATLAS, Universidad Autónoma de Chile</p>`,
       adjuntos: [{ filename: `certificado-${folio}.pdf`, content: pdf }],
     });
     enviado = correo.ok;
