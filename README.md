@@ -41,6 +41,6 @@ docs/
 
 ## Fases
 
-0 Auditoría ✔ · 1 Limpieza ✔ · 2 Arquitectura ✔ · 3 Identidad ✔ · **4 Cursos y progreso ✔ · 5 RAG ✔ · 6 Tutor ✔ · 7 Evaluaciones ✔ · 9 Recordatorios ✔ · 8 Certificación ✔** · 10 WhatsApp Cloud API (10a ✔) · 11 GCP · 12 Seguridad · 13 Observabilidad · 14 Performance · 15 Escalabilidad
+0 Auditoría ✔ · 1 Limpieza ✔ · 2 Arquitectura ✔ · 3 Identidad ✔ · **4 Cursos y progreso ✔ · 5 RAG ✔ · 6 Tutor ✔ · 7 Evaluaciones ✔ · 9 Recordatorios ✔ · 8 Certificación ✔** · 10 WhatsApp Cloud API (10a ✔) · 11 GCP · 12 Seguridad ✔ · 13 Observabilidad · 14 Performance · 15 Escalabilidad
 
 El curso del piloto vive en `contenido/` (Nivel Inicial — Alfabetización ciudadana en IA, 3 propuestas × 8 microcápsulas + producto de cierre) y su estructura está sembrada por las migraciones `0003`/`0004`. Las transcripciones de las microcápsulas (para el RAG de F5) se cargan como `content_item` cuando existan.
