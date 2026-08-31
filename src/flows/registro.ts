@@ -1,6 +1,7 @@
 import { getJson, setJson, kvDel } from '../store/kv';
 import { dbEnabled } from '../store/db';
 import { buscarPersonaPorWaId, crearPersonaRegistrada, type Persona } from '../store/personas';
+import { cursoActivo } from '../store/cursos';
 import { validarNombre, validarEmail, normalizarEmail, capitalizar } from '../core/identidad';
 import { audit } from '../obs/audit';
 import { log } from '../log';
@@ -51,8 +52,14 @@ const T = {
   pausa: 'No hay problema, sigamos conversando y retomamos tu registro después 🙂',
   confirmaEmail: (email: string) => `Anoté: *${email}*\n¿Está correcto?`,
   errorCrear: 'Tuve un problema técnico guardando tu registro 😕 Intentémoslo de nuevo en un momento.',
-  bienvenida: (nombre: string) =>
-    `¡Listo, ${nombre}! ✅ Quedaste registrado.\n\nCuando tu curso esté disponible te avisaré por aquí. Mientras tanto, puedes preguntarme lo que necesites.`,
+  // Dos cierres. El mensaje original venía de la Fase 3, cuando los cursos todavía no existían
+  // (llegaron en la Fase 4), y quedó prometiendo un aviso que ningún job manda. Eso cortaba el
+  // embudo justo acá: la persona terminaba de registrarse y se quedaba esperando, con un curso
+  // activo a un mensaje de distancia. Detectado probando el piloto por WhatsApp real.
+  bienvenida: (nombre: string, curso: string) =>
+    `¡Listo, ${nombre}! ✅ Quedaste registrado.\n\nYa puedes partir con *${curso}*. ¿Comenzamos?`,
+  bienvenidaSinCurso: (nombre: string) =>
+    `¡Listo, ${nombre}! ✅ Quedaste registrado.\n\nCuando haya un curso disponible te aviso por aquí. Mientras tanto, puedes preguntarme lo que necesites.`,
 };
 
 async function getEstado(waId: string): Promise<EstadoRegistro | null> {
@@ -185,7 +192,15 @@ export async function manejarRegistro(msg: InboundMessage, provider: MessagingPr
           return { handled: true };
         }
         await kvDel(KEY(msg.from));
-        await provider.enviarTexto(msg.from, T.bienvenida(persona.nombre ?? nombre));
+        // Si hay curso activo se ofrece empezar de inmediato; si no, se promete el aviso. Consultar
+        // acá evita el cierre muerto de la Fase 3, cuando los cursos aún no existían.
+        const curso = await cursoActivo().catch(() => null);
+        await provider.enviarTexto(
+          msg.from,
+          curso
+            ? T.bienvenida(persona.nombre ?? nombre, curso.nombre)
+            : T.bienvenidaSinCurso(persona.nombre ?? nombre),
+        );
         void audit({ type: 'registro_completo', dialogId: msg.from, detail: { personId: persona.id } });
         return { handled: true, persona };
       }
