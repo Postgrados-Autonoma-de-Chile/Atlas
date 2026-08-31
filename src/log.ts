@@ -3,9 +3,10 @@ import { getRequestContext } from './obs/requestContext';
 
 type Meta = Record<string, unknown>;
 
-// Redacción de PII (email/teléfono) para no volcar datos personales a stdout (Railway).
-// Desactivable con LOG_REDACT=off para depuración local.
-const REDACT = process.env.LOG_REDACT !== 'off';
+// Redacción de PII (email/teléfono/RUT) para no volcar datos personales a stdout.
+// F12: en PRODUCCIÓN la redacción es INCONDICIONAL — el kill-switch LOG_REDACT=off solo
+// funciona en desarrollo (hallazgo MEDIA de la auditoría).
+const REDACT = process.env.NODE_ENV === 'production' || process.env.LOG_REDACT !== 'off';
 
 function emit(level: string, msg: string, meta?: Meta) {
   // Correlación: adjunta reqId (y dialogId, si aplica) del contexto de la petición.

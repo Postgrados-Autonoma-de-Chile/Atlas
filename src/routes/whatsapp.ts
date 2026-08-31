@@ -49,10 +49,11 @@ export function metaVerify(req: Request, res: Response) {
  */
 export function verifyMetaSignature(req: Request, res: Response, next: NextFunction) {
   if (!config.metaAppSecret) {
-    if (process.env.NODE_ENV === 'production') {
+    // F12: fail-closed por defecto; solo DEV_FAIL_OPEN=true (prohibido en producción) abre en local.
+    if (!config.devFailOpen) {
       return res.status(503).json({ error: 'META_APP_SECRET no configurado' });
     }
-    log.warn('verifyMetaSignature: sin META_APP_SECRET (fail-open solo en desarrollo)');
+    log.warn('verifyMetaSignature: sin META_APP_SECRET (DEV_FAIL_OPEN activo — solo desarrollo)');
     return next();
   }
   const header = req.header('x-hub-signature-256') ?? '';

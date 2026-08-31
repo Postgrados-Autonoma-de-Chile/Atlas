@@ -14,10 +14,12 @@ function tokenGuard(getExpected: () => string, headerName: string, label: string
   return (req: Request, res: Response, next: NextFunction) => {
     const expected = getExpected();
     if (!expected) {
-      if (process.env.NODE_ENV === 'production') {
+      // F12: FAIL-CLOSED por defecto en TODOS los entornos; solo DEV_FAIL_OPEN=true (prohibido
+      // en producción por config.ts) permite operar sin el secreto en local.
+      if (!config.devFailOpen) {
         return res.status(503).json({ ok: false, error: `${label} no configurado` });
       }
-      log.warn(`${label}: sin token configurado (fail-open solo en desarrollo)`);
+      log.warn(`${label}: sin token configurado (DEV_FAIL_OPEN activo — solo desarrollo)`);
       return next();
     }
     const given = req.header(headerName) ?? '';

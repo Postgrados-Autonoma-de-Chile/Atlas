@@ -28,7 +28,8 @@ const Env = z.object({
   // ── Persistencia ──
   REDIS_URL: z.string().default(''),
   DATABASE_URL: z.string().default(''),
-  PGSSL: z.enum(['true', 'false']).default('false'),
+  /** 'true' valida el certificado del servidor; 'no-verify' solo para legado (F12). */
+  PGSSL: z.enum(['true', 'false', 'no-verify']).default('false'),
   PGPOOL_MAX: z.coerce.number().int().positive().default(10),
 
   // ── WhatsApp Cloud API (Meta) ──
@@ -43,6 +44,11 @@ const Env = z.object({
   // ── Seguridad / observabilidad ──
   DASHBOARD_TOKEN: z.string().default(''),
   AUDIT_RETENTION_DAYS: z.coerce.number().int().min(0).default(90),
+  /** Clave AES-256-GCM (64 hex) para PII en reposo. Obligatoria en producción (F12). */
+  TOKEN_ENC_KEY: z.string().regex(/^([0-9a-fA-F]{64})?$/, 'debe ser 64 caracteres hex (32 bytes)').default(''),
+  /** F12: los guards y verificaciones de firma son FAIL-CLOSED por defecto en todos los entornos.
+   *  Solo con DEV_FAIL_OPEN=true (y nunca en producción) se permite operar sin secretos en local. */
+  DEV_FAIL_OPEN: z.enum(['true', 'false']).default('false'),
 
   // ── Límites ──
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(600),
@@ -98,9 +104,13 @@ if (isProd) {
     META_VERIFY_TOKEN: env.META_VERIFY_TOKEN,
     META_APP_SECRET: env.META_APP_SECRET,
     DASHBOARD_TOKEN: env.DASHBOARD_TOKEN,
+    TOKEN_ENC_KEY: env.TOKEN_ENC_KEY, // F12: sin clave no hay PII en reposo cifrada → no se arranca
+    WA_CLOUD_PHONE_NUMBER_ID: env.WA_CLOUD_PHONE_NUMBER_ID,
+    WA_CLOUD_TOKEN: env.WA_CLOUD_TOKEN,
   };
   const faltan = Object.entries(obligatorias).filter(([, v]) => !v).map(([k]) => k);
   if (faltan.length) throw new Error(`Producción sin variables obligatorias: ${faltan.join(', ')}`);
+  if (env.DEV_FAIL_OPEN === 'true') throw new Error('DEV_FAIL_OPEN=true está prohibido en producción');
 }
 
 export const config = {
@@ -121,7 +131,7 @@ export const config = {
 
   redisUrl: env.REDIS_URL,
   databaseUrl: env.DATABASE_URL,
-  pgSsl: env.PGSSL === 'true',
+  pgSsl: env.PGSSL,
   pgPoolMax: env.PGPOOL_MAX,
 
   metaVerifyToken: env.META_VERIFY_TOKEN,
@@ -133,6 +143,8 @@ export const config = {
 
   dashboardToken: env.DASHBOARD_TOKEN,
   auditRetentionDays: env.AUDIT_RETENTION_DAYS,
+  tokenEncKey: env.TOKEN_ENC_KEY,
+  devFailOpen: env.DEV_FAIL_OPEN === 'true',
 
   rateLimitMax: env.RATE_LIMIT_MAX,
   rateLimitStrict: env.RATE_LIMIT_STRICT,

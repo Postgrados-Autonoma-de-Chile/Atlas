@@ -32,8 +32,9 @@ export async function initDb(): Promise<void> {
   try {
     pool = new pg.Pool({
       connectionString: config.databaseUrl,
-      // TODO(F11): reemplazar por Cloud SQL connector / CA verificada (no aceptar cualquier cert).
-      ssl: config.pgSsl ? { rejectUnauthorized: false } : undefined,
+      // F12: PGSSL=true VALIDA el certificado del servidor; 'no-verify' queda solo para legado
+      // explícito (en F11, Cloud SQL connector reemplaza esto).
+      ssl: config.pgSsl === 'true' ? true : config.pgSsl === 'no-verify' ? { rejectUnauthorized: false } : undefined,
       max: config.pgPoolMax,
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 5_000,
