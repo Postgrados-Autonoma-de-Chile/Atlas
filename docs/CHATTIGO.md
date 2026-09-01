@@ -18,8 +18,10 @@ La documentación pública no cubre estos puntos. **Sin los dos primeros no se p
    (`/login`, `/outbound`), nunca el host.
 2. **Cómo autenticar el webhook entrante.** Ver la sección de seguridad más abajo: es lo más
    importante de esta integración.
-3. **Cómo enviar plantillas HSM.** Sin esto el piloto no puede iniciar conversaciones.
-4. **Si notifican estados de entrega** por algún canal no documentado.
+3. **El `namespace` de plantillas** del Business Manager (`CHATTIGO_NAMESPACE`), y confirmación de
+   que el host de HSM es `https://login.chattigo.com/message`.
+4. **Si el `/login` del servicio de HSM es el mismo** que el de la API del bot, o usa otro host o
+   credenciales. Compartimos el JWT asumiendo que sí.
 5. **Si existe un tipo interactivo de respuesta rápida** además de `cta_url` y `list`.
 
 ---
@@ -55,21 +57,42 @@ uno caído.
 | Capacidad | Cloud API | Chattigo | Consecuencia |
 |---|---|---|---|
 | Firma del webhook | HMAC-SHA256 | **No existe** | Barrera propia con secreto compartido |
-| Plantillas HSM | Sí | **No documentado** | **No se puede iniciar conversación** |
-| Estados de entrega | sent/delivered/read/failed | **No** | Se pierden las métricas `wa:status:*` y la detección de recordatorios no entregados |
+| Plantillas HSM | Graph API | Otro servicio y otro host (`api-message-massive`) | Equivalente; hasta 1000 destinatarios por llamada |
+| Estados de entrega | sent/delivered/read/failed | SENT/DELIVERY/READ/INVALID, al mismo webhook | Equivalente |
 | Acuse de lectura | Sí | **No** | Sin doble check azul |
 | Botones de respuesta | Hasta 3, bajo el mensaje | Solo lista | Un toque más para responder un verdadero/falso |
 | Adjuntos entrantes | Id de media | URL descargable | Equivalente |
 
-### La carencia que decide
+### Plantillas: otro servicio, otro host
 
-**Sin plantillas HSM no se puede iniciar una conversación.** El motor de convocatoria por oleadas
-([`src/convocatoria/motor.ts`](../src/convocatoria/motor.ts)) queda inoperante y el piloto solo puede
-atender a quien escriba primero — habría que convocar por otro medio (correo, QR impreso, el enlace
-`wa.me`) y esperar a que la persona inicie.
+Las plantillas NO van por la API del bot sino por
+[api-message-massive](https://development.chattigo.com/docs/api-message-massive/):
+`POST {CHATTIGO_HSM_BASE_URL}/inbound` con `type: "HSM"`. Comparte el JWT.
 
-`enviarPlantilla()` devuelve un fallo explícito en vez de fingir éxito. Es deliberado: si fingiera
-haber enviado, la ausencia de invitaciones se descubriría tarde y sin rastro en las métricas.
+Dos particularidades:
+
+- **La respuesta no trae id de mensaje**, solo `{success: true}`. El id llega después en el callback
+  de estado, correlacionado con el `id` que mandamos nosotros — por eso lo generamos al enviar y lo
+  devolvemos como `messageId`. Es la clave con la que el motor de recordatorios sabe después si el
+  envío falló.
+- **`botAttention: true` es obligatorio para ATLAS.** Nosotros abrimos la conversación; sin esa
+  bandera la respuesta del estudiante caería en una cola de agentes humanos, que en ATLAS no existe.
+
+Acepta hasta **1000 destinatarios por llamada**. Hoy enviamos de a uno, igual que con Cloud API; si
+la convocatoria a 10.000 estudiantes lo pide, agrupar es un cambio acotado en
+[`src/convocatoria/motor.ts`](../src/convocatoria/motor.ts).
+
+### Estados de entrega
+
+Llegan como callback al **mismo webhook** que los mensajes, distinguidos por `type` en mayúsculas:
+
+| Chattigo | ATLAS |
+|---|---|
+| `SENT` | `sent` |
+| `DELIVERY` | `delivered` |
+| `READ` | `read` |
+| `INVALID` | `failed` (con `errors[0].code`) |
+| `SESSION` | ignorado — solo avisa que se abrió la ventana de 24 h, no es una entrega |
 
 ---
 
@@ -84,6 +107,8 @@ CHATTIGO_DID=56445550000             # el número de la cuenta, SIN '+'
 CHATTIGO_ID_CAMPAIGN=353
 CHATTIGO_BOT_NAME=ATLAS
 CHATTIGO_WEBHOOK_TOKEN=...           # secreto largo y aleatorio; sin él no entra nada
+CHATTIGO_HSM_BASE_URL=https://login.chattigo.com/message   # plantillas: OTRO host
+CHATTIGO_NAMESPACE=...               # namespace del Business Manager; sin él no salen plantillas
 ```
 
 Volver a Cloud API directo es `WA_PROVIDER=meta` y un redespliegue.
@@ -114,6 +139,6 @@ guarda de número propio lo compara igual que en Cloud API.
 
 ## Estado
 
-Implementado y cubierto por 20 pruebas ([`test/chattigo.test.ts`](../test/chattigo.test.ts)), pero
+Implementado y cubierto por 25 pruebas ([`test/chattigo.test.ts`](../test/chattigo.test.ts)), pero
 **nunca ejercitado contra la API real** — faltan las URLs base y las credenciales. Los formatos salen
 de la documentación, no de tráfico observado.

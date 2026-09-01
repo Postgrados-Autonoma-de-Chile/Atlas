@@ -19,6 +19,8 @@ process.env.CHATTIGO_PASS = 'clave';
 process.env.CHATTIGO_DID = '56445550000';
 process.env.CHATTIGO_ID_CAMPAIGN = '353';
 process.env.CHATTIGO_WEBHOOK_TOKEN = 'secreto-de-prueba-32-caracteres!!';
+process.env.CHATTIGO_HSM_BASE_URL = 'https://login.chattigo.test/message';
+process.env.CHATTIGO_NAMESPACE = 'ns-uautonoma';
 
 type Llamada = { url: string; opts: any };
 const llamadas: Llamada[] = [];
@@ -228,17 +230,74 @@ test('enviarDocumento exige URL pública y la manda como attachment', async () =
   assert.equal(enviado.attachment.fileName, 'cert.pdf');
 });
 
-test('enviarPlantilla FALLA explícitamente: Chattigo no documenta HSM', async () => {
-  // Es la carencia que más pesa. Sin plantillas no se puede INICIAR conversación, así que el motor
-  // de convocatoria por oleadas queda inoperante. Devolver un fallo visible y no un falso éxito es
-  // deliberado: si fingiera haber enviado, la ausencia de invitaciones se descubriría tarde y sin
-  // rastro en las métricas.
+test('enviarPlantilla usa el servicio de HSM, que vive en otro host', async () => {
   reset();
-  const r = await chattigoProvider.enviarPlantilla('+56912345678', 'invitacion_curso', 'es', []);
-  assert.equal(r.ok, false);
-  assert.equal(r.skipped, undefined, 'no es "omitido": es no soportado, y debe notarse');
-  assert.match(String(r.error), /plantilla/i);
-  assert.equal(llamadas.length, 0, 'ni siquiera intenta la llamada');
+  const r = await chattigoProvider.enviarPlantilla('+56912345678', 'invitacion_curso', 'es', ['Rodrigo']);
+  assert.equal(r.ok, true);
+  const hsm = llamadas.find((l) => l.url.includes('/inbound'))!;
+  assert.ok(hsm, 'debe pegarle a /inbound, no a /outbound');
+  assert.match(hsm.url, /login\.chattigo\.test\/message\/inbound$/);
+  const enviado = JSON.parse(hsm.opts.body);
+  assert.equal(enviado.type, 'HSM');
+  assert.equal(enviado.channel, 'WHATSAPP');
+  assert.equal(enviado.did, '56445550000');
+  assert.equal(enviado.hsm.template, 'invitacion_curso');
+  assert.equal(enviado.hsm.languageCode, 'es');
+  assert.equal(enviado.hsm.namespace, 'ns-uautonoma');
+  assert.deepEqual(enviado.hsm.destinations, [{ destination: '56912345678', parameters: ['Rodrigo'] }]);
+});
+
+test('la plantilla pide atención del bot: si no, la respuesta no llegaría al tutor', async () => {
+  // Nosotros ABRIMOS la conversación; sin botAttention la respuesta caería en una cola de agentes
+  // humanos, que en ATLAS no existe.
+  reset();
+  await chattigoProvider.enviarPlantilla('+56912345678', 'invitacion_curso', 'es', []);
+  const enviado = JSON.parse(llamadas.find((l) => l.url.includes('/inbound'))!.opts.body);
+  assert.equal(enviado.hsm.botAttention, true);
+});
+
+test('el messageId lo generamos NOSOTROS: la API de HSM no lo devuelve', async () => {
+  // La respuesta es {success:true} y el id llega después en el callback de estado, correlacionado
+  // con el que mandamos. Sin esto no se podría marcar un recordatorio como no entregado.
+  reset();
+  respuesta = (url) => (url.endsWith('/login') ? { status: 200, body: { access_token: 'jwt-1' } } : { status: 200, body: { success: true } });
+  const r = await chattigoProvider.enviarPlantilla('+56912345678', 'recordatorio', 'es', []);
+  assert.equal(r.ok, true);
+  assert.ok(r.messageId, 'sin messageId no hay forma de correlacionar el callback');
+  const enviado = JSON.parse(llamadas.find((l) => l.url.includes('/inbound'))!.opts.body);
+  assert.equal(enviado.id, r.messageId, 'el id enviado y el devuelto deben ser el mismo');
+});
+
+// ── Callbacks de estado de las plantillas ───────────────────────────────────────────────────────
+
+test('los estados de entrega llegan por el MISMO webhook y se separan de los mensajes', () => {
+  const casos: [string, string][] = [['SENT', 'sent'], ['DELIVERY', 'delivered'], ['READ', 'read'], ['INVALID', 'failed']];
+  for (const [chattigo, nuestro] of casos) {
+    const { messages, statuses } = normalizarEntranteChattigo({
+      id: 'atlas-abc', did: '56445550000', msisdn: '56912345678', type: chattigo, channel: 'WHATSAPP',
+    });
+    assert.equal(messages.length, 0, `${chattigo} no es un turno del estudiante`);
+    assert.equal(statuses.length, 1);
+    assert.equal(statuses[0].status, nuestro);
+    assert.equal(statuses[0].waMessageId, 'atlas-abc', 'el id es el que generamos al enviar');
+    assert.equal(statuses[0].recipient, '+56912345678');
+  }
+});
+
+test('un INVALID trae el código de error para saber por qué no llegó', () => {
+  const { statuses } = normalizarEntranteChattigo({
+    id: 'atlas-abc', msisdn: '56912345678', type: 'INVALID',
+    errors: [{ code: 131026, title: 'Message undeliverable' }],
+  });
+  assert.equal(statuses[0].status, 'failed');
+  assert.equal(statuses[0].errorCode, '131026');
+});
+
+test('SESSION no es un estado de entrega y no contamina las métricas', () => {
+  // Solo avisa que se abrió la ventana de 24 h. Contarlo como entrega falsearía wa:status:*.
+  const { messages, statuses } = normalizarEntranteChattigo({ id: 'x', msisdn: '56912345678', type: 'SESSION' });
+  assert.equal(messages.length, 0);
+  assert.equal(statuses.length, 0);
 });
 
 test('marcarLeido se omite en silencio: no existe acuse de lectura', async () => {

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { config } from '../config';
 import { log } from '../log';
 import { inc } from '../obs/metrics';
@@ -6,6 +7,7 @@ import type {
   BotonOpcion,
   InboundEvent,
   InboundMessage,
+  InboundStatus,
   ListaOpcion,
   MessagingProvider,
   SendResult,
@@ -21,10 +23,11 @@ import type {
 //
 //   1. El webhook entrante NO viene firmado. Meta firma con HMAC-SHA256 y lo verificamos; Chattigo
 //      solo hace POST y espera un 200. La barrera la ponemos nosotros (ver verificarTokenChattigo).
-//   2. No documenta envío de plantillas HSM. Sin eso NO se puede iniciar conversación: el motor de
-//      convocatoria por oleadas queda inoperante y solo se atiende a quien escriba primero.
-//   3. No notifica estados (enviado/entregado/leído/fallido). Perdemos esas métricas.
-//   4. No hay acuse de lectura.
+//   2. Las plantillas (HSM) van por OTRO servicio y OTRO host: api-message-massive, no la API del
+//      bot. Ver enviarPlantilla.
+//   3. Los estados de entrega llegan por callback al MISMO webhook, con nombres propios
+//      (SENT/DELIVERY/READ/INVALID). Ver normalizarEntranteChattigo.
+//   4. No hay acuse de lectura hacia el estudiante (el doble check azul que ponemos nosotros).
 //   5. Los adjuntos entrantes llegan como URL descargable, no como id de media.
 
 const TTL_TOKEN_SEG = 7 * 60 * 60; // el JWT dura 8 h; se renueva una hora antes
@@ -77,45 +80,52 @@ async function obtenerToken(forzar = false): Promise<string | null> {
 }
 
 /**
- * POST a /outbound con reintento ÚNICO ante 401.
+ * POST autenticado con reintento ÚNICO ante 401.
  *
  * El token puede vencer o ser invalidado por un login desde otra parte, y el fallo se ve recién al
  * enviar. Un solo reintento con token fresco: más sería enmascarar un problema de credenciales
  * detrás de una tormenta de logins.
+ *
+ * Lo comparten los dos servicios de Chattigo, que viven en hosts distintos: /outbound (API del bot)
+ * y /inbound (plantillas HSM).
  */
-async function enviarOutbound(payload: Record<string, unknown>): Promise<SendResult> {
+async function postAutenticado(url: string, payload: Record<string, unknown>, etiqueta: string): Promise<SendResult> {
   if (!estaConfigurado()) return { ok: false, skipped: true };
 
   for (const intento of [1, 2]) {
     const token = await obtenerToken(intento === 2);
     if (!token) return { ok: false, error: 'sin token de Chattigo' };
     try {
-      const r = await fetch(`${config.chattigoBaseUrl}/outbound`, {
+      const r = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(TIMEOUT_MS),
       });
       if (r.status === 401 && intento === 1) {
-        log.warn('chattigo: 401 al enviar, renuevo el token y reintento');
+        log.warn('chattigo: 401 al enviar, renuevo el token y reintento', { etiqueta });
         continue;
       }
       const cuerpo: any = await r.json().catch(() => ({}));
       if (!r.ok) {
         inc('errors:chattigo_envio');
         const detalle = String(cuerpo?.message ?? cuerpo?.error ?? r.statusText).slice(0, 160);
-        log.warn('chattigo: envío falló', { status: r.status, detalle });
+        log.warn('chattigo: envío falló', { etiqueta, status: r.status, detalle });
         return { ok: false, error: detalle };
       }
       return { ok: true, messageId: cuerpo?.id != null ? String(cuerpo.id) : undefined };
     } catch (e) {
       inc('errors:chattigo_envio');
-      log.warn('chattigo: error de red al enviar', { err: String(e) });
+      log.warn('chattigo: error de red al enviar', { etiqueta, err: String(e) });
       return { ok: false, error: String(e) };
     }
   }
   return { ok: false, error: 'chattigo: agotados los intentos' };
 }
+
+/** POST a la API del bot (mensajes dentro de la ventana de 24 h). */
+const enviarOutbound = (payload: Record<string, unknown>) =>
+  postAutenticado(`${config.chattigoBaseUrl}/outbound`, payload, 'outbound');
 
 /** Campos que Chattigo espera en todo saliente, más allá del contenido. */
 function sobre(to: string, extra: Record<string, unknown>): Record<string, unknown> {
@@ -177,6 +187,19 @@ export function verificarTokenChattigo(recibido: string | undefined): boolean {
 const TIPOS_DE_SISTEMA = new Set(['transfer', 'group', 'close', 'timeout']);
 
 /**
+ * Callbacks de estado de las plantillas, al MISMO webhook que los mensajes.
+ *
+ * Se distinguen por el campo `type`, que en los estados viene en MAYÚSCULAS y con nombres propios
+ * de Chattigo. SESSION (se abrió la ventana de 24 h) no es un estado de entrega y se ignora.
+ */
+const ESTADOS: Record<string, InboundStatus['status']> = {
+  SENT: 'sent',
+  DELIVERY: 'delivered',
+  READ: 'read',
+  INVALID: 'failed',
+};
+
+/**
  * Normaliza el webhook de Chattigo al InboundMessage del dominio.
  *
  * Chattigo manda UN mensaje por POST (Meta manda lotes), así que el arreglo trae 0 o 1 elemento.
@@ -184,12 +207,33 @@ const TIPOS_DE_SISTEMA = new Set(['transfer', 'group', 'close', 'timeout']);
  */
 export function normalizarEntranteChattigo(body: any): InboundEvent {
   const messages: InboundMessage[] = [];
-  if (!body || typeof body !== 'object') return { messages, statuses: [] };
+  const statuses: InboundStatus[] = [];
+  if (!body || typeof body !== 'object') return { messages, statuses };
+
+  // ¿Es un callback de estado de una plantilla? Llega por el mismo webhook.
+  const tipoEstado = String(body.type ?? '').toUpperCase();
+  if (tipoEstado === 'SESSION') {
+    // No es un estado de entrega: solo avisa que la ventana de 24 h quedó abierta.
+    return { messages, statuses };
+  }
+  if (ESTADOS[tipoEstado]) {
+    const errores = Array.isArray(body.errors) ? body.errors : [];
+    statuses.push({
+      // El id es el que NOSOTROS generamos al enviar la plantilla, no uno de Chattigo: es la clave
+      // con la que el motor de recordatorios correlaciona el envío con su resultado.
+      waMessageId: String(body.id ?? ''),
+      status: ESTADOS[tipoEstado],
+      timestamp: new Date(),
+      recipient: aE164(body.msisdn),
+      errorCode: errores[0]?.code != null ? String(errores[0].code) : undefined,
+    });
+    return { messages, statuses };
+  }
 
   const tipoCrudo = String(body.type ?? '').toLowerCase();
   if (TIPOS_DE_SISTEMA.has(tipoCrudo)) {
     log.info('chattigo: evento de sistema ignorado', { tipo: tipoCrudo });
-    return { messages, statuses: [] };
+    return { messages, statuses };
   }
 
   const from = aE164(body.msisdn);
@@ -198,7 +242,7 @@ export function normalizarEntranteChattigo(body: any): InboundEvent {
   const id = body.id != null ? `chattigo:${body.id}` : '';
   if (!from || !id) {
     log.warn('chattigo: mensaje sin remitente o sin id, descartado');
-    return { messages, statuses: [] };
+    return { messages, statuses };
   }
 
   const attachment = body.attachment ?? null;
@@ -232,7 +276,7 @@ export function normalizarEntranteChattigo(body: any): InboundEvent {
     filename: attachment?.fileName != null ? String(attachment.fileName) : undefined,
   });
 
-  return { messages, statuses: [] };
+  return { messages, statuses };
 }
 
 // ── Provider ────────────────────────────────────────────────────────────────────────────────────
@@ -246,18 +290,42 @@ export const chattigoProvider: MessagingProvider = {
   },
 
   /**
-   * NO IMPLEMENTADO: Chattigo no documenta el envío de plantillas HSM. Su único endpoint de HSM
-   * (GET /messages/...) sirve para LEER mensajes que el bot no procesó, no para enviar.
+   * Plantilla pre-aprobada (HSM): el único mensaje permitido fuera de la ventana de 24 h, y lo que
+   * hace posible INICIAR la conversación (convocatoria por oleadas y recordatorios).
    *
-   * Consecuencia concreta: con este proveedor NO se puede iniciar una conversación. El motor de
-   * convocatoria por oleadas queda inoperante y el piloto solo puede atender a quien escriba
-   * primero. Devuelve un fallo explícito en vez de fingir éxito, para que quede en las métricas y
-   * no se descubra cuando falten los avisos.
+   * Va por un servicio y un host DISTINTOS de la API del bot: api-message-massive, no /outbound.
+   * Comparte el JWT.
+   *
+   * La respuesta NO trae id de mensaje —solo {success:true}—; el id llega después en el callback de
+   * estado, correlacionado con el `id` que mandamos nosotros. Por eso lo generamos aquí y lo
+   * devolvemos como messageId: es la clave con la que registrarWamid() podrá luego marcar el
+   * recordatorio como no entregado si el callback dice INVALID.
    */
-  async enviarPlantilla(_to, plantilla, _lang, _params) {
-    inc('errors:chattigo_plantilla_no_soportada');
-    log.error('chattigo: envío de plantilla HSM no soportado por el proveedor', { plantilla });
-    return { ok: false, error: 'chattigo: plantillas HSM no soportadas (ver docs/CHATTIGO.md)' };
+  async enviarPlantilla(to, plantilla, lang, params) {
+    if (!estaConfigurado()) return { ok: false, skipped: true };
+    if (!config.chattigoNamespace) {
+      inc('errors:chattigo_sin_namespace');
+      log.error('chattigo: falta CHATTIGO_NAMESPACE, la plantilla no se puede enviar', { plantilla });
+      return { ok: false, error: 'chattigo: falta CHATTIGO_NAMESPACE' };
+    }
+    const id = `atlas-${randomUUID()}`;
+    const payload = {
+      id,
+      did: config.chattigoDid,
+      type: 'HSM',
+      channel: 'WHATSAPP',
+      hsm: {
+        destinations: [{ destination: aMsisdn(to), parameters: params }],
+        namespace: config.chattigoNamespace,
+        template: plantilla,
+        languageCode: lang,
+        // El estudiante que responda la invitación tiene que caer en el bot, no en una cola de
+        // agentes: sin esto la conversación que ABRIMOS nosotros no llegaría al tutor.
+        botAttention: true,
+      },
+    };
+    const r = await postAutenticado(`${config.chattigoHsmBaseUrl}/inbound`, payload, 'plantilla');
+    return r.ok ? { ok: true, messageId: id } : r;
   },
 
   /**

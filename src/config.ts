@@ -58,6 +58,10 @@ const Env = z.object({
   CHATTIGO_ID_CAMPAIGN: z.coerce.number().int().nonnegative().default(0),
   /** Nombre con el que el bot se identifica en los mensajes salientes (campo `botName`). */
   CHATTIGO_BOT_NAME: z.string().default('ATLAS'),
+  /** Base del servicio de PLANTILLAS (HSM). Es OTRO host que el de la API del bot. */
+  CHATTIGO_HSM_BASE_URL: z.string().default('https://login.chattigo.com/message'),
+  /** Namespace de plantillas del Business Manager. Obligatorio para enviar HSM. */
+  CHATTIGO_NAMESPACE: z.string().default(''),
   /**
    * Secreto compartido para autenticar el webhook ENTRANTE.
    *
@@ -204,6 +208,8 @@ export const config = {
   chattigoDid: env.CHATTIGO_DID,
   chattigoIdCampaign: env.CHATTIGO_ID_CAMPAIGN,
   chattigoBotName: env.CHATTIGO_BOT_NAME,
+  chattigoHsmBaseUrl: env.CHATTIGO_HSM_BASE_URL.replace(/\/$/, ''),
+  chattigoNamespace: env.CHATTIGO_NAMESPACE,
   chattigoWebhookToken: env.CHATTIGO_WEBHOOK_TOKEN,
 
   dashboardToken: env.DASHBOARD_TOKEN,

@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import { messagingProvider, normalizarEntranteChattigo, verificarTokenChattigo } from '../messaging';
-import { encolarMensajes } from './whatsapp';
+import { encolarMensajes, procesarEstados } from './whatsapp';
 import { getRequestContext } from '../obs/requestContext';
 import { inc } from '../obs/metrics';
 import { config } from '../config';
@@ -49,9 +49,9 @@ export function chattigoWebhook(req: Request, res: Response) {
   const requestId = getRequestContext()?.requestId ?? '-';
   const evento = normalizarEntranteChattigo(req.body ?? {});
 
-  // Chattigo no notifica estados de entrega (enviado/entregado/leído/fallido), así que
-  // evento.statuses viene siempre vacío. Con este proveedor perdemos las métricas wa:status:* y la
-  // detección de recordatorios no entregados que sí tenemos en Cloud API.
+  // Los callbacks de estado de las plantillas (SENT/DELIVERY/READ/INVALID) llegan por este mismo
+  // webhook, no por uno aparte: normalizarEntranteChattigo los separa de los mensajes.
+  procesarEstados(evento.statuses);
   if (!evento.messages.length) return;
 
   const provider = messagingProvider();

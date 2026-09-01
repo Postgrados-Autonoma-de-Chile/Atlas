@@ -14,7 +14,7 @@ import { TUTOR_WHATSAPP_PROFILE } from '../core/channel';
 import { getRequestContext, runWithRequestContext } from '../obs/requestContext';
 import { messagingProvider, normalizarEntrante } from '../messaging';
 import { pubsubHabilitado, publicarTurno } from '../messaging/colaTurnos';
-import type { InboundMessage, MessagingProvider } from '../messaging';
+import type { InboundMessage, InboundStatus, MessagingProvider } from '../messaging';
 import { manejarRegistro, CONSENT_VERSION } from '../flows/registro';
 import { manejarEvaluacion } from '../flows/evaluacion';
 import { manejarCertificacion } from '../flows/certificacion';
@@ -79,15 +79,24 @@ export function metaWebhook(req: Request, res: Response) {
   const evento = normalizarEntrante(req.body ?? {});
   const provider = messagingProvider();
 
-  for (const s of evento.statuses) {
+  procesarEstados(evento.statuses);
+
+  encolarMensajes(evento.messages, provider, requestId);
+}
+
+/**
+ * Contabiliza los estados de entrega de los mensajes salientes, venga el callback del proveedor que
+ * venga. Un 'failed' marca el recordatorio como no entregado (F9), para no insistir sobre un número
+ * que no recibe.
+ */
+export function procesarEstados(estados: InboundStatus[]): void {
+  for (const s of estados) {
     inc(`wa:status:${s.status}`);
     if (s.status === 'failed') {
       log.warn('whatsapp: mensaje saliente falló', { waMessageId: s.waMessageId, errorCode: s.errorCode });
-      void marcarFallidoPorWamid(s.waMessageId).catch(() => {}); // recordatorio no entregado (F9)
+      void marcarFallidoPorWamid(s.waMessageId).catch(() => {});
     }
   }
-
-  encolarMensajes(evento.messages, provider, requestId);
 }
 
 /**
