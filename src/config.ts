@@ -40,11 +40,33 @@ const Env = z.object({
   // ── WhatsApp Cloud API (Meta) ──
   META_VERIFY_TOKEN: z.string().default(''),
   META_APP_SECRET: z.string().default(''),
-  /** 'meta' = Cloud API directo · '' = envío desactivado. 'bsp' llegará como implementación futura. */
-  WA_PROVIDER: z.enum(['meta', '']).default(''),
+  /** 'meta' = Cloud API directo · 'chattigo' = BSP Chattigo · '' = envío desactivado. */
+  WA_PROVIDER: z.enum(['meta', 'chattigo', '']).default(''),
   WA_CLOUD_PHONE_NUMBER_ID: z.string().default(''),
   WA_CLOUD_TOKEN: z.string().default(''),
   WA_GRAPH_VERSION: z.string().regex(/^v\d+\.\d+$/).default('v23.0'),
+
+  // ── BSP Chattigo (alternativa a Cloud API directo) ──
+  /** Base de la API, SIN barra final. Chattigo no publica las URLs de sus ambientes: hay que
+   *  pedírselas (son distintas en desarrollo y producción). */
+  CHATTIGO_BASE_URL: z.string().default(''),
+  CHATTIGO_USER: z.string().default(''),
+  CHATTIGO_PASS: z.string().default(''),
+  /** Número de la cuenta en Chattigo (campo `did`), en formato internacional SIN '+'. */
+  CHATTIGO_DID: z.string().default(''),
+  /** Campaña a la que pertenece el bot (campo `idCampaign`). */
+  CHATTIGO_ID_CAMPAIGN: z.coerce.number().int().nonnegative().default(0),
+  /** Nombre con el que el bot se identifica en los mensajes salientes (campo `botName`). */
+  CHATTIGO_BOT_NAME: z.string().default('ATLAS'),
+  /**
+   * Secreto compartido para autenticar el webhook ENTRANTE.
+   *
+   * Chattigo NO firma sus webhooks: la documentación solo describe un POST a la URL del cliente que
+   * debe responder 200. Sin esto, cualquiera que descubra la ruta puede hacerse pasar por un
+   * estudiante, alterar su progreso o disparar la emisión de un certificado. Se exige por header
+   * (x-atlas-token) o, si Chattigo no permite headers personalizados, en la propia ruta.
+   */
+  CHATTIGO_WEBHOOK_TOKEN: z.string().default(''),
 
   // ── Seguridad / observabilidad ──
   DASHBOARD_TOKEN: z.string().default(''),
@@ -175,6 +197,14 @@ export const config = {
   waCloudPhoneNumberId: env.WA_CLOUD_PHONE_NUMBER_ID,
   waCloudToken: env.WA_CLOUD_TOKEN,
   waGraphVersion: env.WA_GRAPH_VERSION,
+
+  chattigoBaseUrl: env.CHATTIGO_BASE_URL.replace(/\/$/, ''),
+  chattigoUser: env.CHATTIGO_USER,
+  chattigoPass: env.CHATTIGO_PASS,
+  chattigoDid: env.CHATTIGO_DID,
+  chattigoIdCampaign: env.CHATTIGO_ID_CAMPAIGN,
+  chattigoBotName: env.CHATTIGO_BOT_NAME,
+  chattigoWebhookToken: env.CHATTIGO_WEBHOOK_TOKEN,
 
   dashboardToken: env.DASHBOARD_TOKEN,
   auditRetentionDays: env.AUDIT_RETENTION_DAYS,

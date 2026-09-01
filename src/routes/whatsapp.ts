@@ -87,10 +87,18 @@ export function metaWebhook(req: Request, res: Response) {
     }
   }
 
-  for (const msg of evento.messages) {
+  encolarMensajes(evento.messages, provider, requestId);
+}
+
+/**
+ * Encola los mensajes de un webhook, sea cual sea el proveedor que los trajo.
+ *
+ * Con Pub/Sub activo (F11) el webhook solo publica y el worker procesa; si el publish falla se
+ * degrada al despacho local, porque perder el orden es mejor que perder el turno.
+ */
+export function encolarMensajes(mensajes: InboundMessage[], provider: MessagingProvider, requestId = '-'): void {
+  for (const msg of mensajes) {
     if (pubsubHabilitado()) {
-      // Split webhook/worker (F11): el webhook solo publica; el worker procesa (POST /pubsub/turnos).
-      // Si el publish falla, se degrada al despacho local: perder el orden es mejor que perder el turno.
       void publicarTurno(msg).then((r) => {
         if (r.ok) return inc('pubsub:publicado');
         inc('errors:pubsub_publish');

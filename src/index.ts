@@ -4,6 +4,7 @@ import { config } from './config';
 import { log } from './log';
 import { runWithRequestContext } from './obs/requestContext';
 import { metaVerify, verifyMetaSignature, metaWebhook } from './routes/whatsapp';
+import { chattigoWebhook } from './routes/chattigo';
 import { initDb, startRetentionSweep, dbEnabled } from './store/db';
 import { snapshot, costoEstimadoUsd } from './obs/metrics';
 import { dbResumenNegocio } from './store/metricasNegocio';
@@ -123,6 +124,12 @@ app.get('/metrics', requireDashboardToken, async (_req, res) => {
 // POST = eventos, con verificación de firma. El procesamiento real llega en Fase 10.
 app.get('/webhooks/whatsapp', metaVerify);
 app.post('/webhooks/whatsapp', strictLimiter, verifyMetaSignature, metaWebhook);
+
+// Webhook del BSP Chattigo. Mismo pipeline que el de Meta; la diferencia está en la autenticación:
+// Chattigo no firma sus webhooks, así que la barrera es un secreto compartido (ver routes/chattigo).
+// El token se acepta por header o como segmento de ruta, según lo que permita configurar el BSP.
+app.post('/webhooks/chattigo', strictLimiter, chattigoWebhook);
+app.post('/webhooks/chattigo/:token', strictLimiter, chattigoWebhook);
 
 // Worker Pub/Sub (F11): la push subscription entrega aquí los turnos que publicó el webhook.
 // OIDC fail-closed (verifyPubSubPush); se procesa DENTRO del request (Pub/Sub espera el ack).
