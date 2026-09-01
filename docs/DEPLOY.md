@@ -46,7 +46,20 @@ DATABASE_URL=... GEMINI_API_KEY=... npx tsx scripts/ingerir-contenido.ts descrip
   recibe el Cloud Scheduler en `/jobs/recordatorios` cada 15 min.
 - **DLQ** `atlas-turnos-dlq` (5 intentos): inspeccionar con la suscripción `atlas-turnos-dlq-inspeccion`.
 - **Cloud SQL** por connector (socket `/cloudsql/...`, sin `no-verify`); backups + PITR activos.
-- **Memorystore** por Direct VPC egress (red `default`).
+- **Redis** por Direct VPC egress (red `default`). Terraform provisiona **Memorystore**, que es lo
+  correcto en producción: gestionado, con respaldos y opción de alta disponibilidad. El despliegue
+  del **piloto** usa en cambio un Redis sobre una VM `e2-micro` (`atlas-redis`, us-east1-b, **sin IP
+  pública**), porque Memorystore parte en 1 GiB por ~USD 35/mes y el uso real son unos pocos MB —
+  cuadruplicaba la factura del resto del piloto. Detalles de esa variante:
+  - Firewall `atlas-redis-desde-subred`: 6379 solo desde `10.142.0.0/20`, que es de donde sale
+    Cloud Run con Direct VPC egress. SSH únicamente por IAP (`atlas-redis-ssh-iap`).
+  - La contraseña vive en Secret Manager (`atlas-redis-password`) y la VM la lee al arrancar con su
+    propia identidad, que no puede leer ningún otro secreto. **Nunca** viaja en los metadatos de la
+    instancia, que los ve cualquiera con permiso de lectura sobre Compute.
+  - La imagen se baja de `mirror.gcr.io` por acceso privado a Google: sin IP pública ni Cloud NAT.
+  - Contrapartida aceptada: sin alta disponibilidad ni respaldos gestionados. Hay snapshots RDB a
+    disco, así que un reinicio de la VM no borra el estado, pero la pérdida de la zona sí.
+  - Para escalar a Memorystore: cambiar el secreto `atlas-redis-url` por su endpoint y redesplegar.
 
 ## 3. Validación post-deploy
 

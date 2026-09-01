@@ -160,11 +160,38 @@ function sanitizeHistory(messages: any[]): any[] {
   });
 }
 
-function textOf(resp: any): string {
-  const text = (resp.content as any[])
-    .filter((b) => b.type === 'text')
-    .map((b) => b.text)
-    .join('\n')
+/**
+ * Quita etiquetas internas que el modelo pudo escribir como TEXTO en vez de emitirlas como bloques.
+ *
+ * Es la red de seguridad de un modo de falla real, visto en el piloto: un turno respondió al
+ * estudiante con `<invoke name="continuar_curso"></invoke>` en vez de llamar la herramienta. El turno
+ * "tuvo éxito", ningún log registró un error y la herramienta jamás corrió — pero a la persona le
+ * llegó XML por WhatsApp.
+ *
+ * La causa de fondo se corrige con el thinking del perfil (ver core/channel.ts); esto es la defensa
+ * de último metro, porque una fuga que llega al estudiante es peor que un turno perdido.
+ */
+export function limpiarEtiquetasInternas(texto: string): string {
+  const limpio = String(texto ?? '')
+    .replace(/<invoke[\s\S]*?<\/antml:invoke>/gi, '')
+    .replace(/<\/?antml:(invoke|parameter|function_calls)[^>]*>/gi, '')
+    .replace(/<\/?(invoke|function_calls|parameter)\b[^>]*>/gi, '')
+    .replace(/<\/?thinking>/gi, '')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
+  if (limpio !== String(texto ?? '').trim()) {
+    inc('errors:etiqueta_fugada');
+    log.warn('agentLoop: el modelo escribió una etiqueta interna como texto; se limpió antes de responder');
+  }
+  return limpio;
+}
+
+function textOf(resp: any): string {
+  const text = limpiarEtiquetasInternas(
+    (resp.content as any[])
+      .filter((b) => b.type === 'text')
+      .map((b) => b.text)
+      .join('\n'),
+  );
   return text || FALLBACK_EMPTY;
 }

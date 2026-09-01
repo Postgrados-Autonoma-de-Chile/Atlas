@@ -7,6 +7,7 @@ import { validarRut, normalizarRut } from '../core/identidad';
 import { generarCertificadoPdf } from '../cert/pdf';
 import { enviarCorreo } from '../cert/mailer';
 import { audit } from '../obs/audit';
+import { config } from '../config';
 import { log } from '../log';
 import type { InboundMessage, MessagingProvider } from '../messaging/types';
 
@@ -25,6 +26,10 @@ const TTL = 48 * 3600;
 const CODE_TTL = 15 * 60;
 
 const RE_CERT = /\b(certificado|certificarme|certificacion|diploma)\b/;
+/** plano() ya quitó los acentos, así que basta la forma sin tilde. */
+// Prefijo, no lista cerrada: cubre reenviar, reenvíalo, reenvíamelo, reenvíenmelo, reenvío...
+// Solo se evalúa DENTRO de la rama del certificado, así que no puede capturar otros usos.
+const RE_REENVIAR = /\breenvi|\b(de nuevo|otra vez|no me lleg)/;
 const plano = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 const textoDe = (m: InboundMessage) => (m.type === 'text' ? m.text ?? '' : m.type === 'interactive' ? m.interactiveReplyTitle ?? '' : '').trim();
 
@@ -53,23 +58,58 @@ async function enviarCodigo(persona: Persona, provider: MessagingProvider, waId:
   return true;
 }
 
+/**
+ * Enlace "Agregar a mi perfil" de LinkedIn. Es un formulario prellenado de LinkedIn (no una API):
+ * abre el perfil de la persona con los campos de la certificación ya completos, y ella confirma.
+ * Requiere certUrl público — de ahí que dependa de la misma página de verificación que el QR.
+ */
+export function enlaceLinkedIn(curso: string, folio: string, urlVerificacion: string, fecha: Date): string {
+  const q = new URLSearchParams({
+    startTask: 'CERTIFICATION_NAME',
+    name: curso,
+    organizationName: 'Universidad Autónoma de Chile',
+    issueYear: String(fecha.getFullYear()),
+    issueMonth: String(fecha.getMonth() + 1),
+    certUrl: urlVerificacion,
+    certId: folio,
+  });
+  return `https://www.linkedin.com/profile/add?${q.toString()}`;
+}
+
 /** Emite + envía el certificado. Devuelve true si el correo salió. */
 async function emitirYEnviar(cert: Certificado, persona: Persona, provider: MessagingProvider, waId: string): Promise<void> {
-  const folio = await emitir(cert.id);
-  if (!folio) {
+  const emision = await emitir(cert.id);
+  if (!emision) {
     await provider.enviarTexto(waId, 'Tuve un problema técnico emitiendo tu certificado 😕 Inténtalo de nuevo en unos minutos escribiendo *certificado*.');
     return;
   }
+  const { folio, codigo } = emision;
   void audit({ type: 'certificado_emitido', dialogId: waId, detail: { folio } });
 
   const nombre = [persona.nombre, persona.apellido].filter(Boolean).join(' ') || 'Estudiante';
+  const fecha = new Date();
+  // Sin BASE_URL no hay a dónde apuntar: se omiten el QR y el botón de LinkedIn en vez de generar
+  // enlaces rotos en un documento que la persona va a mostrarle a un empleador.
+  const urlVerificacion = config.baseUrl && codigo
+    ? `${config.baseUrl}/verificar/${encodeURIComponent(folio)}?c=${encodeURIComponent(codigo)}`
+    : undefined;
   let enviado = false;
   try {
-    const pdf = await generarCertificadoPdf({ nombreCompleto: nombre, curso: cert.cursoNombre, minutos: cert.minutos, folio, fecha: new Date() });
+    const pdf = await generarCertificadoPdf({ nombreCompleto: nombre, curso: cert.cursoNombre, minutos: cert.minutos, folio, fecha, urlVerificacion });
     const correo = await enviarCorreo({
       to: persona.email ?? '',
       subject: `Tu certificado — ${cert.cursoNombre} (folio ${folio})`,
-      html: `<p>Hola ${persona.nombre ?? ''},</p><p>¡Felicitaciones! 🎉 Completaste el curso <b>${cert.cursoNombre}</b>.</p><p>Adjuntamos tu certificado (folio <b>${folio}</b>).</p><p>— ATLAS, Universidad Autónoma de Chile</p>`,
+      html:
+        `<p>Hola ${persona.nombre ?? ''},</p>` +
+        `<p>¡Felicitaciones! 🎉 Completaste el curso <b>${cert.cursoNombre}</b>.</p>` +
+        `<p>Adjuntamos tu certificado (folio <b>${folio}</b>).</p>` +
+        (urlVerificacion
+          ? `<p>Puedes verificar su validez en cualquier momento aquí:<br><a href="${urlVerificacion}">${urlVerificacion}</a></p>` +
+            `<p><a href="${enlaceLinkedIn(cert.cursoNombre, folio, urlVerificacion, fecha)}" ` +
+            `style="display:inline-block;padding:10px 18px;background:#0a66c2;color:#fff;text-decoration:none;border-radius:4px">` +
+            `Agregar a mi perfil de LinkedIn</a></p>`
+          : '') +
+        `<p>— ATLAS, Universidad Autónoma de Chile</p>`,
       adjuntos: [{ filename: `certificado-${folio}.pdf`, content: pdf }],
     });
     enviado = correo.ok;
@@ -104,7 +144,14 @@ export async function manejarCertificacion(
     const cert = await certificadoDePersona(persona.id);
     if (!cert) return { handled: false }; // sin curso completado: que el tutor explique el avance real
     if (cert.estado === 'enviado') {
-      await provider.enviarTexto(waId, `Tu certificado ya fue emitido y enviado a tu correo ✅ (folio *${cert.folio}*). Si no lo encuentras, revisa spam o avísame para reenviarlo escribiendo *reenviar certificado*.`);
+      // "reenviar certificado" tiene que REENVIAR de verdad. Antes caía aquí igual (contiene la
+      // palabra "certificado") y devolvía este mismo mensaje: la persona quedaba en un bucle,
+      // releyendo la instrucción que acababa de seguir. Le pasa justo a quien perdió el correo.
+      if (RE_REENVIAR.test(plano(texto))) {
+        await emitirYEnviar(cert, persona, provider, waId); // folio y código ya asignados: solo reenvía
+        return { handled: true };
+      }
+      await provider.enviarTexto(waId, `Tu certificado ya fue emitido y enviado a tu correo ✅ (folio *${cert.folio}*). Si no lo encuentras, revisa spam o escribe *reenviar certificado* y te lo mando de nuevo.`);
       return { handled: true };
     }
     if (cert.estado === 'emitido') {
@@ -199,9 +246,30 @@ export async function manejarCertificacion(
         if (!ok) await provider.enviarTexto(waId, 'No pude reenviar el código ahora mismo 😕 Inténtalo en unos minutos.');
         return { handled: true };
       }
-      const codigo = texto.replace(/\s/g, '');
       const guardado = await getJson<{ codigo: string }>(CODE_KEY(persona.id));
-      if (!/^\d{6}$/.test(codigo) || !guardado || guardado.codigo !== codigo) {
+      // El código puede venir DENTRO de otro texto, no solo. WhatsApp incluye el mensaje citado
+      // cuando se responde a uno, y la gente escribe "mi código es 123456". Se buscan grupos de 6
+      // dígitos en vez de exigir que el mensaje entero sea el código. \b a ambos lados para que un
+      // RUT (19864724-1) no aporte un falso "198647".
+      const compacto = texto.replace(/\s+/g, '');
+      const candidatos = [...new Set([...(texto.match(/\b\d{6}\b/g) ?? []), ...(compacto.match(/\b\d{6}\b/g) ?? [])])];
+
+      // SIN ningún grupo de 6 dígitos no hay código equivocado: la persona escribió otra cosa
+      // ("certificado", "no me llegó nada"). Contarlo como intento fallido la expulsaba del flujo
+      // a los tres mensajes sin haber errado un código jamás — se detectó en el piloto, cuando un
+      // mensaje con la palabra "certificado" recibió "Ese código no coincide". Se guía sin gastar
+      // intentos: los intentos son para códigos realmente equivocados.
+      if (candidatos.length === 0) {
+        await provider.enviarTexto(
+          waId,
+          RE_CERT.test(plano(texto))
+            ? 'Ya estamos en el último paso 🙂 Solo falta el código de *6 dígitos* que te llegó al correo (revisa también spam). Si no te llegó, escribe *reenviar*.'
+            : 'Para emitir tu certificado necesito el código de *6 dígitos* que te llegó al correo (revisa también spam). Escríbelo aquí, o escribe *reenviar* si no te llega.',
+        );
+        return { handled: true };
+      }
+
+      if (!guardado || !candidatos.includes(guardado.codigo)) {
         if (estado.intentos >= 2) {
           await kvDel(KEY(waId));
           await kvDel(CODE_KEY(persona.id));

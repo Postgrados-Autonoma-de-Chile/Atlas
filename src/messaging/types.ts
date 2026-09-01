@@ -18,6 +18,10 @@ export type InboundMessage = {
   waMessageId: string;
   /** Teléfono del estudiante normalizado a E.164 con '+'. */
   from: string;
+  /** phone_number_id AL QUE llegó el mensaje (metadata del webhook). Un webhook de Meta se
+   *  configura por APP, así que una app suscrita a varias cuentas recibe el tráfico de TODAS: sin
+   *  este dato el servicio no puede distinguir su propio número del de otro. */
+  aPhoneNumberId?: string;
   timestamp: Date;
   type: 'text' | 'interactive' | 'audio' | 'image' | 'document' | 'unknown';
   /** Texto del mensaje (type=text) o caption si lo hubiera. */

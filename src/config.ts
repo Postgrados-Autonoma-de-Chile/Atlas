@@ -90,6 +90,21 @@ const Env = z.object({
   /** Tope de recordatorios sin nueva actividad del estudiante (luego se deja de insistir). */
   REMINDER_MAX_SIN_ACTIVIDAD: z.coerce.number().int().positive().default(3),
 
+  // ── Convocatoria de cohortes ──
+  /** Apagada por defecto: encenderla gasta plantillas pagadas y consume el tramo de Meta. */
+  CONVOCATORIA_ACTIVA: z.enum(['true', 'false']).default('false'),
+  /** Plantilla de invitación APROBADA por Meta. Sin ella no se envía nada aunque esté activa. */
+  CONVOCATORIA_TEMPLATE: z.string().default(''),
+  /** Cupo por oleada (el job corre por Cloud Scheduler) y por día (tramo de Meta). */
+  CONVOCATORIA_MAX_POR_CORRIDA: z.coerce.number().int().positive().default(100),
+  CONVOCATORIA_MAX_POR_DIA: z.coerce.number().int().positive().default(500),
+  /** Reintentos por invitación fallida. Un ok:false del proveedor significa que NO envió, así que
+   *  reintentar no arriesga pagar dos veces; el tope evita insistir contra un número inexistente. */
+  CONVOCATORIA_MAX_INTENTOS: z.coerce.number().int().positive().default(2),
+  /** Número del tutor en formato libre: el enlace wa.me se arma con sus dígitos. */
+  WA_ME_NUMERO: z.string().default(''),
+  WA_ME_TEXTO: z.string().default('Hola, quiero inscribirme en el curso de IA'),
+
   // ── RAG (F5): embeddings Gemini + pgvector ──
   GEMINI_API_KEY: z.string().default(''),
   EMBEDDING_MODEL: z.string().default('gemini-embedding-001'),
@@ -188,6 +203,14 @@ export const config = {
   waTemplateLang: env.WA_TEMPLATE_LANG,
   reminderDiasInactividad: env.REMINDER_DIAS_INACTIVIDAD,
   reminderMaxSinActividad: env.REMINDER_MAX_SIN_ACTIVIDAD,
+
+  convocatoriaActiva: env.CONVOCATORIA_ACTIVA === 'true',
+  convocatoriaTemplate: env.CONVOCATORIA_TEMPLATE,
+  convocatoriaMaxPorCorrida: env.CONVOCATORIA_MAX_POR_CORRIDA,
+  convocatoriaMaxPorDia: env.CONVOCATORIA_MAX_POR_DIA,
+  convocatoriaMaxIntentos: env.CONVOCATORIA_MAX_INTENTOS,
+  waMeNumero: env.WA_ME_NUMERO,
+  waMeTexto: env.WA_ME_TEXTO,
 
   geminiApiKey: env.GEMINI_API_KEY,
   embeddingModel: env.EMBEDDING_MODEL,

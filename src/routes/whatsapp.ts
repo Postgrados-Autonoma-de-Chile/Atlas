@@ -23,6 +23,7 @@ import { registrarOptOut, registrarOptIn } from '../store/personas';
 import { cancelarDePersona, marcarFallidoPorWamid } from '../store/recordatorios';
 import { esOptOutRecordatorios, esOptInRecordatorios } from '../reminders/motor';
 import { setJson } from '../store/kv';
+import { marcarRespondio } from '../store/invitaciones';
 
 // Canal WhatsApp Cloud API (Fase 10a): webhook → normalización → dedupe → lock por conversación →
 // motor del tutor → respuesta por el MessagingProvider.
@@ -168,6 +169,19 @@ async function contenidoDelTurno(
 export async function procesarMensajeEntrante(msg: InboundMessage, provider: MessagingProvider): Promise<void> {
   if (!msg.from || !msg.waMessageId) return;
 
+  // GUARDA DE NÚMERO PROPIO. El webhook de Meta se configura por APP, no por número: una app
+  // suscrita a varias cuentas de WhatsApp Business recibe el tráfico de TODAS. Sin esta
+  // verificación, este servicio atendería conversaciones de un número productivo ajeno al piloto —
+  // le respondería a alguien que escribió buscando otra cosa, y le crearía una ficha de estudiante.
+  // Se ignora en silencio (Meta ya recibió su 200) y se deja rastro para poder detectarlo.
+  if (config.waCloudPhoneNumberId && msg.aPhoneNumberId && msg.aPhoneNumberId !== config.waCloudPhoneNumberId) {
+    inc('inbound:numero_ajeno');
+    return log.warn('whatsapp: mensaje dirigido a OTRO número, ignorado', {
+      esperado: config.waCloudPhoneNumberId,
+      recibido: msg.aPhoneNumberId,
+    });
+  }
+
   // Idempotencia: Meta reintenta el webhook hasta 7 días → el TTL del dedupe debe cubrir toda esa
   // ventana con margen (revisión F9.1: 24h dejaba pasar reintentos tardíos como mensajes nuevos).
   if (!(await once(`wa:msg:${msg.waMessageId}`, 8 * 24 * 3600))) {
@@ -178,6 +192,10 @@ export async function procesarMensajeEntrante(msg: InboundMessage, provider: Mes
   // Ventana de servicio de 24h de WhatsApp: registrar la última entrada del estudiante permite a
   // los recordatorios (F9) elegir texto libre (gratis) vs plantilla utility.
   void setJson(`ult_in:${msg.from}`, { t: Date.now() }, 25 * 3600).catch(() => {});
+
+  // Convocatoria: este número escribió. Si estaba en la cola de invitaciones sale de ella, venga del
+  // QR o de la plantilla — así no se le paga una invitación a quien ya llegó. Best-effort.
+  void marcarRespondio(msg.from).catch(() => {});
 
   // Marcar como leído (check azul) — mejora la experiencia; no crítico.
   void provider.marcarLeido(msg.waMessageId).catch(() => {});
