@@ -16,7 +16,7 @@ import { messagingProvider, normalizarEntrante } from '../messaging';
 import { pubsubHabilitado, publicarTurno } from '../messaging/colaTurnos';
 import type { InboundMessage, InboundStatus, MessagingProvider } from '../messaging';
 import { manejarRegistro, CONSENT_VERSION } from '../flows/registro';
-import { manejarEvaluacion } from '../flows/evaluacion';
+import { manejarEvaluacion, iniciarQuizPendiente } from '../flows/evaluacion';
 import { manejarCertificacion } from '../flows/certificacion';
 import { contextoAcademico } from '../store/cursos';
 import { registrarOptOut, registrarOptIn } from '../store/personas';
@@ -283,6 +283,15 @@ export async function procesarMensajeEntrante(msg: InboundMessage, provider: Mes
   else {
     inc('errors:send');
     log.error('whatsapp: fallo al enviar la respuesta', { error: enviado.error });
+  }
+
+  // Mini-quiz automático (F7): si el turno completó una microcápsula con quiz, se envía AHORA, una
+  // vez que el estudiante ya leyó la felicitación del tutor. Lanzarlo dentro de la herramienta
+  // habría puesto las preguntas antes de ese mensaje, dejando la conversación al revés.
+  if (enviado.ok) {
+    await iniciarQuizPendiente(msg.from, persona, provider).catch((e) =>
+      log.warn('whatsapp: no pude enviar el mini-quiz automático', { err: String(e) }),
+    );
   }
 
   // Auditoría MINIMIZADA: metadatos del turno, nunca el texto completo (política de Fase 1).

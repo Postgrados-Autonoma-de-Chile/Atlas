@@ -56,7 +56,7 @@ mock.module('../src/store/evaluaciones.ts', {
   },
 });
 
-const { manejarEvaluacion, marcarOfertaQuiz, mapearRespuestaAOpcion } = await import('../src/flows/evaluacion');
+const { manejarEvaluacion, marcarQuizPendiente, iniciarQuizPendiente, tomarQuizPendiente, mapearRespuestaAOpcion } = await import('../src/flows/evaluacion');
 import type { InboundMessage, MessagingProvider, SendResult } from '../src/messaging/types';
 
 const OK: SendResult = { ok: true };
@@ -153,32 +153,65 @@ test('reintento, re-guía ante texto no reconocido y salida con pausa', async ()
   assert.equal(r.handled, false);
 });
 
-test('oferta tras completar lección: sí inicia, no la descarta', async () => {
+// ── Quiz AUTOMÁTICO ─────────────────────────────────────────────────────────────────────────────
+//
+// El mini-quiz dejó de ofrecerse: se envía siempre al completar una microcápsula. El cambio nació
+// de la prueba real del curso, donde ofrecerlo significó que 7 de 9 microcápsulas quedaran sin
+// evaluar — decir "sigamos" es más fácil que decir "sí". La práctica ahora es el camino por
+// omisión, y saltarla exige escribir *salir*.
+
+test('el quiz se envía solo al completar la microcápsula, sin preguntar nada', async () => {
   const { p, textos } = fakeProvider();
   const from = '+56900040003';
 
-  await marcarOfertaQuiz(from);
-  let r = await manejarEvaluacion(texto(from, 'no gracias'), PERSONA as any, p);
-  assert.equal(r.handled, false, 'el rechazo pasa al tutor (que sigue la conversación)');
-  // La oferta quedó descartada: un "sí" posterior ya no inicia nada
-  r = await manejarEvaluacion(texto(from, 'sí'), PERSONA as any, p);
-  assert.equal(r.handled, false);
-
-  await marcarOfertaQuiz(from);
-  r = await manejarEvaluacion(texto(from, 'sí, dale'), PERSONA as any, p);
-  assert.equal(r.handled, true, 'la aceptación de la oferta inicia el quiz');
-  assert.match(textos.at(-2) ?? textos.at(-1)!, /Mini-quiz/);
+  await marcarQuizPendiente(from, false);
+  const arrancado = await iniciarQuizPendiente(from, PERSONA as any, p);
+  assert.equal(arrancado, true, 'debe arrancar sin que el estudiante lo pida');
+  assert.match(textos.join(' '), /Mini-quiz|pregunta/i);
 });
 
-test('un "sí" dentro de una frase al tutor NO secuestra la oferta (revisión F9.1)', async () => {
+test('sin quiz pendiente no se envía nada', async () => {
+  const { p, textos } = fakeProvider();
+  const arrancado = await iniciarQuizPendiente('+56900040013', PERSONA as any, p);
+  assert.equal(arrancado, false);
+  assert.equal(textos.length, 0);
+});
+
+test('el marcador de pendiente se consume una sola vez', async () => {
+  // Si no se consumiera, un reintento del webhook de Meta mandaría el quiz dos veces.
+  const { p } = fakeProvider();
+  const from = '+56900040004';
+  await marcarQuizPendiente(from, false);
+  assert.equal(await tomarQuizPendiente(from) !== null, true);
+  assert.equal(await tomarQuizPendiente(from), null, 'la segunda lectura no debe encontrar nada');
+});
+
+test('un "sí" ya no arranca ningún quiz: no hay oferta que aceptar', async () => {
   const { p } = fakeProvider();
   const from = '+56900040005';
-  await marcarOfertaQuiz(from);
-  let r = await manejarEvaluacion(texto(from, 'sí, creo que quedó claro lo de los sesgos'), PERSONA as any, p);
-  assert.equal(r.handled, false, 'la frase va al tutor');
-  r = await manejarEvaluacion(texto(from, 'sí'), PERSONA as any, p);
-  assert.equal(r.handled, true, 'la afirmación corta y sola sí toma la oferta');
+  for (const t of ['sí', 'sí, dale', 'ok', 'sí, creo que quedó claro lo de los sesgos']) {
+    const r = await manejarEvaluacion(texto(from, t), PERSONA as any, p);
+    assert.equal(r.handled, false, `"${t}" debe seguir al tutor`);
+  }
 });
+
+test('"quiz" sigue sirviendo para repetir uno por voluntad propia', async () => {
+  const { p, textos } = fakeProvider();
+  const r = await manejarEvaluacion(texto('+56900040006', 'quiz'), PERSONA as any, p);
+  assert.equal(r.handled, true);
+  assert.match(textos.join(' '), /Mini-quiz|pregunta/i);
+});
+
+test('el estudiante puede saltárselo con *salir*', async () => {
+  const { p, textos } = fakeProvider();
+  const from = '+56900040007';
+  await marcarQuizPendiente(from, false);
+  await iniciarQuizPendiente(from, PERSONA as any, p);
+  const r = await manejarEvaluacion(texto(from, 'salir'), PERSONA as any, p);
+  assert.equal(r.handled, true);
+  assert.match(textos.at(-1)!, /pausamos/i);
+});
+
 
 test('sin persona o sin BD: el flujo no intercepta', async () => {
   const { p } = fakeProvider();

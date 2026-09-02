@@ -18,24 +18,43 @@ type EstadoEvaluacion = {
   total: number;
   pregunta: PreguntaConOpciones;
   enviadaEn: number; // epoch ms → tiempo de respuesta
+  /** El quiz nació de la ÚLTIMA microcápsula: al cerrarlo hay que apuntar al certificado y no
+   *  invitar a "continuar" con una microcápsula que ya no existe. */
+  finCurso?: boolean;
 };
 
 const KEY = (waId: string) => `evaluacion:${waId}`;
-const OFERTA_KEY = (waId: string) => `quiz:oferta:${waId}`;
+const PENDIENTE_KEY = (waId: string) => `quiz:pendiente:${waId}`;
 const TTL = 2 * 3600; // una evaluación abandonada expira a las 2h (el attempt queda abierto en BD)
 
 const LETRAS = ['A', 'B', 'C', 'D'];
 /** Minúsculas sin acentos: el \b de JS es ASCII y trata "í" como no-palabra ("sí\b" fallaría). */
 const plano = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 const RE_INICIO = /\b(quiz|mini[- ]?quiz|evaluacion|practicar|prueba)\b/;
-const RE_NO = /^(no+|ahora no|despues|luego)\b/;
 const RE_SALIR = /\b(salir|pausa(r)?|detener|cancelar|despues sigo)\b/;
 
-/** Marca que hay un quiz ofrecido tras completar una lección (la escribe el toolRunner).
- *  TTL corto (10 min): pasada la conversación inmediata, el "sí" vuelve a pertenecerle al tutor
- *  (revisión F9.1) — el quiz sigue disponible con la palabra "quiz". */
-export async function marcarOfertaQuiz(waId: string): Promise<void> {
-  await setJson(OFERTA_KEY(waId), { en: Date.now() }, 600);
+/**
+ * Marca que, terminado este turno, corresponde ENVIAR el mini-quiz de la microcápsula que el
+ * estudiante acaba de completar. La escribe el toolRunner al procesar completar_leccion.
+ *
+ * El quiz ya no se ofrece: se conduce siempre. La decisión pedagógica es que la práctica no sea
+ * opcional — en el piloto, ofrecerlo significó que 7 de 9 microcápsulas quedaran sin evaluar,
+ * porque "sigamos" es más fácil que "sí". El estudiante puede saltárselo escribiendo *salir*, pero
+ * el camino por omisión es practicar.
+ *
+ * El TTL es corto porque este marcador solo vive entre la ejecución de la herramienta y el envío de
+ * la respuesta del tutor, dentro del mismo turno.
+ */
+export async function marcarQuizPendiente(waId: string, finCurso: boolean): Promise<void> {
+  await setJson(PENDIENTE_KEY(waId), { en: Date.now(), finCurso }, 300);
+}
+
+/** ¿Quedó un quiz pendiente de enviar en este turno? Lo consume (lectura destructiva). */
+export async function tomarQuizPendiente(waId: string): Promise<{ finCurso: boolean } | null> {
+  const p = await getJson<{ en: number; finCurso: boolean }>(PENDIENTE_KEY(waId));
+  if (!p) return null;
+  await kvDel(PENDIENTE_KEY(waId));
+  return { finCurso: Boolean(p.finCurso) };
 }
 
 /** Texto plano o título del botón. */
@@ -123,7 +142,10 @@ export async function manejarEvaluacion(
       const cierre = r.correctas === r.total
         ? `🎉 *${nota}* ¡Impecable! Dominaste esta microcápsula.`
         : `📘 Resultado: *${nota}*. Lo importante es lo que aprendiste en el camino — puedes repetirlo cuando quieras escribiendo *quiz*.`;
-      await provider.enviarTexto(waId, `${cierre}\n\n¿Seguimos con la próxima microcápsula? Escribe *continuar* cuando quieras.`);
+      const siguientePaso = estado.finCurso
+        ? 'Con esta terminaste todas las microcápsulas del curso 🎓 Escribe *certificado* para obtener el tuyo.'
+        : '¿Seguimos con la próxima microcápsula? Escribe *continuar* cuando quieras.';
+      await provider.enviarTexto(waId, `${cierre}\n\n${siguientePaso}`);
       void audit({ type: 'evaluacion_finalizada', dialogId: waId, detail: { quiz: estado.quizId, intento: estado.intentoN, correctas: r.correctas, total: r.total } });
       return { handled: true };
     }
@@ -133,36 +155,50 @@ export async function manejarEvaluacion(
     return { handled: true };
   }
 
-  // ── Sin evaluación activa: ¿corresponde iniciar una? ────────────────────────
+  // ── Sin evaluación activa: solo queda el comando explícito para REPETIR ────
+  // El arranque tras completar una microcápsula ya no pasa por aquí: es automático (ver
+  // iniciarQuizPendiente, que corre al cerrar el turno). Este camino sirve para que alguien
+  // rehaga un quiz cuando quiera, escribiendo "quiz".
   const texto = plano(textoDe(msg));
-  const oferta = await getJson<{ en: number }>(OFERTA_KEY(waId));
-  // Aceptación ESTRICTA (revisión F9.1): solo una afirmación corta y sola ("sí", "sí dale", "ok")
-  // toma la oferta — un "sí" dentro de una frase al tutor ("sí, creo que quedó claro") no la secuestra.
-  const afirmacionCorta = /^(si+|dale|ok|ya|bueno|claro|vamos)( (dale|po|ok|si+|vamos|bueno))?$/
-    .test(texto.replace(/[,.!¡¿?]/g, ' ').replace(/\s+/g, ' ').trim());
-  const aceptaOferta = oferta && msg.type !== 'interactive' && afirmacionCorta;
-  const pideQuiz = RE_INICIO.test(texto);
-  if (oferta && RE_NO.test(texto)) {
-    await kvDel(OFERTA_KEY(waId)); // rechazó la oferta: el mensaje sigue al tutor con normalidad
-    return { handled: false };
-  }
-  if (!aceptaOferta && !pideQuiz) return { handled: false };
+  if (!RE_INICIO.test(texto)) return { handled: false };
+  const arrancado = await iniciarQuiz(waId, persona, provider, false);
+  return { handled: arrancado };
+}
 
+/**
+ * Envía el mini-quiz pendiente, si lo hay. Se llama al FINAL del turno, después de que salió la
+ * respuesta del tutor: si se lanzara dentro de la herramienta, las preguntas llegarían antes del
+ * mensaje que felicita el avance y la conversación quedaría al revés.
+ */
+export async function iniciarQuizPendiente(
+  waId: string, persona: Persona | null, provider: MessagingProvider,
+): Promise<boolean> {
+  if (!persona) return false;
+  const pendiente = await tomarQuizPendiente(waId);
+  if (!pendiente) return false;
+  // Si el estudiante ya está en medio de otra evaluación, no se le encima una segunda.
+  if (await getJson<EstadoEvaluacion>(KEY(waId))) return false;
+  return iniciarQuiz(waId, persona, provider, pendiente.finCurso);
+}
+
+/** Arranca el quiz que corresponda al avance del estudiante. Devuelve false si no hay ninguno. */
+async function iniciarQuiz(
+  waId: string, persona: Persona, provider: MessagingProvider, finCurso: boolean,
+): Promise<boolean> {
   const pendiente = await quizParaIniciar(persona.id);
-  if (!pendiente) return { handled: false }; // sin lecciones completadas con quiz: que el tutor explique
-
+  if (!pendiente) return false; // sin lecciones completadas con quiz: que el tutor explique
   const inicio = await iniciarAttempt(pendiente.enrollmentId, pendiente.quizId);
-  if (!inicio) return { handled: false };
-  await kvDel(OFERTA_KEY(waId));
+  if (!inicio) return false;
   await setJson(KEY(waId), {
     attemptId: inicio.attemptId, quizId: inicio.quizId, titulo: inicio.titulo,
-    intentoN: inicio.intentoN, total: inicio.total, pregunta: inicio.primera, enviadaEn: Date.now(),
+    intentoN: inicio.intentoN, total: inicio.total, pregunta: inicio.primera,
+    enviadaEn: Date.now(), finCurso,
   } satisfies EstadoEvaluacion, TTL);
   await provider.enviarTexto(
     waId,
-    `🧠 *${inicio.titulo}* — ${inicio.total} pregunta${inicio.total > 1 ? 's' : ''}${inicio.intentoN > 1 ? ` (intento ${inicio.intentoN})` : ''}. Esto es para practicar: no hay nota, solo aprendizaje. Escribe *salir* si quieres pausar.`,
+    `🧠 *${inicio.titulo}* — ${inicio.total} pregunta${inicio.total > 1 ? 's' : ''}${inicio.intentoN > 1 ? ` (intento ${inicio.intentoN})` : ''}. Esto es para practicar: no hay nota, solo aprendizaje. Escribe *salir* si prefieres seguir después.`,
   );
   await enviarPregunta(waId, provider, inicio.primera, `1 de ${inicio.total}`);
   void audit({ type: 'evaluacion_iniciada', dialogId: waId, detail: { quiz: inicio.quizId, intento: inicio.intentoN } });
-  return { handled: true };
+  return true;
 }

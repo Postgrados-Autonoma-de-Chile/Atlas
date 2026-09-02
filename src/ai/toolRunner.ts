@@ -2,7 +2,7 @@ import type { AgentContext } from '../core/channel';
 import { buscarPersonaPorWaId } from '../store/personas';
 import { inscribir, estadoAcademico, entregarLeccionActual, completarLeccionActual, cursoActivo } from '../store/cursos';
 import { quizDeLeccion } from '../store/evaluaciones';
-import { marcarOfertaQuiz } from '../flows/evaluacion';
+import { marcarQuizPendiente } from '../flows/evaluacion';
 import { buscarContenidoCurso } from '../rag/retrieval';
 import { audit } from '../obs/audit';
 import { log } from '../log';
@@ -89,10 +89,10 @@ export async function executeTool(name: string, _input: unknown, ctx?: AgentCont
           dialogId: ctx?.conversationId,
           detail: { orden: r.completada.orden, minutos: r.minutosAcumulados, finCurso: r.cursoCompletado },
         });
-        // ¿La microcápsula completada tiene mini-quiz? Deja la oferta lista para que el flujo
-        // determinista la inicie apenas el estudiante acepte (F7).
+        // ¿La microcápsula completada tiene mini-quiz? Se deja marcado para que el pipeline lo
+        // envíe en cuanto salga esta respuesta (F7). El quiz NO se ofrece: se conduce siempre.
         const quiz = await quizDeLeccion(r.completada.id);
-        if (quiz && ctx?.conversationId) await marcarOfertaQuiz(ctx.conversationId);
+        if (quiz && ctx?.conversationId) await marcarQuizPendiente(ctx.conversationId, r.cursoCompletado);
         return {
           ok: true,
           completada: { orden: r.completada.orden, titulo: r.completada.titulo },
@@ -100,7 +100,7 @@ export async function executeTool(name: string, _input: unknown, ctx?: AgentCont
           cursoCompletado: r.cursoCompletado,
           siguiente: r.siguiente ?? null,
           ...(quiz
-            ? { quizDisponible: true, instruccionQuiz: 'Ofrece el mini-quiz de práctica de esta microcápsula (sin nota): dile que responda "sí" o escriba "quiz" cuando quiera. NO formules tú las preguntas: el sistema conduce el quiz automáticamente.' }
+            ? { quizDisponible: true, instruccionQuiz: 'El sistema enviará el mini-quiz de práctica INMEDIATAMENTE después de tu mensaje. Felicita el avance en UNA o dos frases y anuncia el quiz en una línea ("ahora unas preguntas rápidas para afianzarlo"). NO preguntes si quiere hacerlo, NO ofrezcas continuar con la próxima microcápsula y NO formules tú las preguntas: ya está en camino.' }
             : {}),
           ...(r.cursoCompletado
             ? { mensaje: 'Felicita al estudiante: terminó todas las microcápsulas. Ya puede obtener su certificado: dile que escriba *certificado* y el sistema lo guiará (RUT + verificación de correo). NO conduzcas tú ese proceso ni pidas el RUT.' }
