@@ -1,7 +1,7 @@
 import type { AgentContext } from '../core/channel';
 import { buscarPersonaPorWaId } from '../store/personas';
 import { inscribir, estadoAcademico, entregarLeccionActual, completarLeccionActual, cursoActivo } from '../store/cursos';
-import { quizDeLeccion } from '../store/evaluaciones';
+import { quizDeLeccion, quizzesPendientes } from '../store/evaluaciones';
 import { marcarQuizPendiente } from '../flows/evaluacion';
 import { buscarContenidoCurso } from '../rag/retrieval';
 import { audit } from '../obs/audit';
@@ -21,6 +21,23 @@ function enmascararEmail(email: string): string {
 }
 
 const NO_REGISTRADO = { ok: false, error: 'no_registrado', mensaje: 'El estudiante aún no está registrado: invítalo a registrarse escribiendo "quiero registrarme".' };
+
+/**
+ * Quizzes de práctica que le quedan sin rendir, con la instrucción de qué hacer con el dato.
+ * Devuelve un objeto vacío cuando no hay ninguno, para no ensuciar el resultado de la herramienta
+ * ni gastar tokens en un cero.
+ */
+async function practicaPendiente(personId: string): Promise<Record<string, unknown>> {
+  const n = await quizzesPendientes(personId);
+  if (n <= 0) return {};
+  return {
+    quizzesPendientes: n,
+    instruccionPractica:
+      `Le quedan ${n} mini-quiz${n > 1 ? 'zes' : ''} de práctica de microcápsulas que ya completó. ` +
+      'Ofréceselo en UNA frase al cierre de tu mensaje, diciéndole que escriba "quiz" para partir con uno. ' +
+      'No insistas si no responde y no lo repitas en cada mensaje.',
+  };
+}
 
 export async function executeTool(name: string, _input: unknown, ctx?: AgentContext): Promise<unknown> {
   try {
@@ -62,13 +79,24 @@ export async function executeTool(name: string, _input: unknown, ctx?: AgentCont
           total: estado.totalLecciones,
           minutosAcumulados: estado.enrollment?.minutosAcumulados,
           proxima: estado.proxima ?? null,
+          ...(await practicaPendiente(ctx.personId)),
         };
       }
 
       case 'continuar_curso': {
         if (!ctx?.personId) return NO_REGISTRADO;
         const entrega = await entregarLeccionActual(ctx.personId);
-        if (!entrega) return { ok: false, error: 'sin_leccion_pendiente', mensaje: 'No hay lección pendiente: o no está inscrito, o ya completó el curso (consulta el progreso).' };
+        if (!entrega) {
+          // Ya completó el curso (o no está inscrito). Si le quedan quizzes por rendir, es lo único
+          // que todavía puede hacer: se informa para que el tutor lo ofrezca en vez de dejarlo sin
+          // nada. Ver quizzesPendientes.
+          return {
+            ok: false,
+            error: 'sin_leccion_pendiente',
+            mensaje: 'No hay lección pendiente: o no está inscrito, o ya completó el curso (consulta el progreso).',
+            ...(await practicaPendiente(ctx.personId)),
+          };
+        }
         void audit({ type: 'leccion_entregada', dialogId: ctx?.conversationId, detail: { orden: entrega.leccion.orden } });
         return { ok: true, posicion: entrega.posicion, leccion: entrega.leccion };
       }

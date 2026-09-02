@@ -37,6 +37,37 @@ export async function quizDeLeccion(lessonId: string): Promise<{ id: string; tit
 
 /** Quiz a iniciar para la persona: el de la lección COMPLETADA más reciente sin intento finalizado;
  *  si todos tienen intento finalizado, el más reciente (para repetir como práctica). */
+/**
+ * Cuántos mini-quizzes de microcápsulas YA COMPLETADAS le quedan sin rendir.
+ *
+ * Existe porque el quiz automático solo se dispara al completar una microcápsula: quien terminó el
+ * curso —o lo recorrió cuando el quiz era opcional— acumula evaluaciones pendientes que de otro
+ * modo quedarían invisibles, descubribles solo si adivina la palabra "quiz". Las herramientas de
+ * progreso lo informan para que el tutor pueda ofrecerlas.
+ */
+export async function quizzesPendientes(personId: string): Promise<number> {
+  const pool = getPool();
+  if (!pool) return 0;
+  try {
+    const r = await pool.query(
+      `SELECT count(*)::int AS n
+         FROM enrollment e
+         JOIN lesson_progress lp ON lp.enrollment_id = e.id AND lp.estado = 'completada'
+         JOIN quiz q ON q.lesson_id = lp.lesson_id AND q.estado = 'activo'
+        WHERE e.person_id = $1
+          AND NOT EXISTS (
+                SELECT 1 FROM quiz_attempt qa
+                 WHERE qa.quiz_id = q.id AND qa.enrollment_id = e.id AND qa.finalizado_en IS NOT NULL
+              )`,
+      [personId],
+    );
+    return r.rows[0]?.n ?? 0;
+  } catch (e) {
+    log.warn('evaluaciones: quizzesPendientes falló', { err: String(e) });
+    return 0;
+  }
+}
+
 export async function quizParaIniciar(personId: string): Promise<{ quizId: string; titulo: string; enrollmentId: string } | null> {
   const pool = getPool();
   if (!pool) return null;
