@@ -12,13 +12,13 @@ const OP = (id: string, texto: string, ok: boolean) => ({ id, orden: 0, texto, e
 const P1 = {
   id: 'q1', orden: 1, tipo: 'seleccion_multiple' as const,
   enunciado: '¿Qué describe mejor a la IA?',
-  explicacion: 'La Microcápsula 1 explica: aprende de datos y genera respuestas.',
+  explicacion: 'La Microcápsula 1 explica: aprende de datos y genera respuestas.', sinRespuestaCorrecta: false, itemTexto: null,
   opciones: [OP('o1a', 'Un robot físico', false), OP('o1b', 'Sistemas que aprenden de datos', true), OP('o1c', 'Solo repite texto', false), OP('o1d', 'Tecnología de laboratorio', false)],
 };
 const P2 = {
   id: 'q2', orden: 2, tipo: 'verdadero_falso' as const,
   enunciado: 'La IA solo existe en laboratorios.',
-  explicacion: 'Falso: la Microcápsula 1 muestra que la IA ya es parte de la vida cotidiana.',
+  explicacion: 'Falso: la Microcápsula 1 muestra que la IA ya es parte de la vida cotidiana.', sinRespuestaCorrecta: false, itemTexto: null,
   opciones: [OP('o2v', 'Verdadero', false), OP('o2f', 'Falso', true)],
 };
 
@@ -36,7 +36,16 @@ mock.module('../src/store/evaluaciones.ts', {
     iniciarAttempt: async () => {
       const attemptId = 'a' + proximoIntento;
       attempts.set(attemptId, { respuestas: [], intentoN: proximoIntento });
-      return { attemptId, quizId: 'quiz1', titulo: 'Mini-quiz — Microcápsula 1', intentoN: proximoIntento++, total: 2, primera: P1 };
+      return {
+        attemptId, quizId: 'quiz1', titulo: 'Lo intento — Microcápsula 1',
+        intentoN: proximoIntento++, total: 2, primera: P1,
+        interaccion: {
+          tipo: 'seleccion_unica',
+          consigna: 'Responde las dos preguntas de práctica.',
+          retroalimentacion: 'El criterio: la IA apoya, la decisión sigue siendo de la persona.',
+          minimoRequerido: 2,
+        },
+      };
     },
     registrarRespuesta: async (attemptId: string, _quizId: string, pregunta: any, optionId: string, tiempoMs: number | null) => {
       const att = attempts.get(attemptId)!;
@@ -47,6 +56,8 @@ mock.module('../src/store/evaluaciones.ts', {
         esCorrecta: elegida.esCorrecta,
         correctaTexto: pregunta.opciones.find((o: any) => o.esCorrecta).texto,
         explicacion: pregunta.explicacion,
+        sinRespuestaCorrecta: false,
+        elegidaTexto: elegida.texto,
         correctas: att.respuestas.filter((r) => r.ok).length,
         total: 2,
         siguiente: finalizado ? null : P2,
@@ -91,15 +102,18 @@ test('mapearRespuestaAOpcion: botón, letras y V/F; inválidos → null', () => 
   assert.equal(mapearRespuestaAOpcion(texto('+1', 'V'), P2 as any), 'o2v');
 });
 
-test('ciclo completo: comando quiz → SM por lista → correcta → V/F por botones → incorrecta → resumen', async () => {
+test('ciclo completo: "Lo intento" abre con la consigna, acusa cada ítem y cierra con el criterio', async () => {
   const { p, textos, botones, listas } = fakeProvider();
   const from = '+56900040001';
 
   // Inicio por comando
   let r = await manejarEvaluacion(texto(from, 'quiero hacer el quiz'), PERSONA as any, p);
   assert.equal(r.handled, true);
-  assert.match(textos[0], /Mini-quiz/);
-  assert.match(textos[0], /no hay nota/i);
+  // El plan llama "Lo intento" a este momento, y la CONSIGNA del documento abre la actividad:
+  // en una clasificación es lo único que explica qué se está pidiendo.
+  assert.match(textos[0], /Lo intento/);
+  assert.match(textos[0], /no hay nota/i, 'la certificación es por finalización, sin evaluación formal');
+  assert.match(textos[0], /Responde las dos preguntas de práctica/, 'la consigna del documento');
   assert.equal(listas.length, 1, 'la SM va como lista');
   assert.deepEqual(listas[0].titulos, ['A', 'B', 'C', 'D']);
   assert.ok(listas[0].ids.every((id) => id.startsWith('resp:')));
@@ -107,8 +121,9 @@ test('ciclo completo: comando quiz → SM por lista → correcta → V/F por bot
   // Respuesta correcta por botón de lista
   r = await manejarEvaluacion(btn(from, 'resp:o1b', 'B'), PERSONA as any, p);
   assert.equal(r.handled, true);
+  // Acuse BREVE por ítem: el criterio completo va una sola vez al cerrar, no repetido en cada uno.
   assert.match(textos.at(-1)!, /✅/);
-  assert.match(textos.at(-1)!, /Microcápsula 1/);
+  assert.doesNotMatch(textos.at(-1)!, /Microcápsula 1/, 'el criterio no se repite ítem por ítem');
   assert.equal(botones.length, 1, 'la V/F va como botones');
   assert.deepEqual(botones[0].ids, ['resp:o2v', 'resp:o2f']);
 
@@ -116,11 +131,13 @@ test('ciclo completo: comando quiz → SM por lista → correcta → V/F por bot
   r = await manejarEvaluacion(texto(from, 'verdadero'), PERSONA as any, p);
   assert.equal(r.handled, true);
   const feedback = textos.at(-2)!;
-  assert.match(feedback, /correcta era: \*Falso\*/);
-  assert.match(feedback, /Microcápsula 1/);
-  const resumen = textos.at(-1)!;
-  assert.match(resumen, /1\/2/);
-  assert.match(resumen, /continuar/i);
+  assert.match(feedback, /correspondía: \*Falso\*/, 'dice cuál era, sin sermón');
+  const cierre = textos.at(-1)!;
+  // El criterio del documento, completo y al final. Y SIN nota: mostrar "1/2" inventaría una
+  // exigencia que el plan no establece — la certificación es por finalización.
+  assert.match(cierre, /la decisión sigue siendo de la persona/, 'el criterio del documento');
+  assert.doesNotMatch(cierre, /1\/2/, 'no se muestra puntaje');
+  assert.match(cierre, /continuar/i);
 
   // Registro §9: respuestas con tiempo medido
   const att = attempts.get('a1')!;

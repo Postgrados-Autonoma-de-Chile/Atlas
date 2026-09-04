@@ -1,11 +1,30 @@
 import { getJson, setJson, kvDel } from '../store/kv';
 import { dbEnabled } from '../store/db';
-import { quizParaIniciar, iniciarAttempt, registrarRespuesta, type PreguntaConOpciones } from '../store/evaluaciones';
+import { quizParaIniciar, iniciarAttempt, registrarRespuesta,
+  type PreguntaConOpciones, type Interaccion } from '../store/evaluaciones';
 import { audit } from '../obs/audit';
 import type { InboundMessage, MessagingProvider } from '../messaging/types';
 import type { Persona } from '../store/personas';
 
-// Flujo DETERMINISTA de evaluación (Fase 7): intercepta las respuestas ANTES del motor LLM.
+// Flujo DETERMINISTA del momento "Lo intento" de cada microcápsula.
+//
+// FUENTE: plan curricular del Nivel Inicial — «Cada microcápsula incorpora al menos una acción
+// breve del participante: elegir, ordenar, comparar, clasificar, mejorar una solicitud o aplicar
+// una pauta», con retroalimentación inmediata. La certificación es por finalización y SIN
+// evaluación formal, así que esto no es un examen: es práctica.
+//
+// Cuatro formas, tomadas de los documentos de las 8 microcápsulas:
+//   seleccion_unica     una opción es la mejor (cápsulas 1 y 3)
+//   clasificacion       cada fragmento va a una categoría (2, 4, 5 y 7)
+//   seleccion_multiple  elegir al menos N casos, ninguno incorrecto (6)
+//   eleccion            elegir modalidad, ambas válidas (8)
+//
+// El plan es explícito en cómo retroalimentar: «Retroalimentar las decisiones explicando el
+// criterio, no solo indicando correcto o incorrecto». Por eso el criterio del documento se entrega
+// UNA vez al cerrar la actividad, y no repetido en cada ítem — en la cápsula 5 serían seis veces
+// el mismo párrafo.
+//
+// Flujo DETERMINISTA (Fase 7): intercepta las respuestas ANTES del motor LLM.
 // El parsing de la alternativa elegida es exacto (id de botón/lista o texto A-D / V-F), el registro
 // es transaccional y la retroalimentación nace de la explicación DOCENTE guardada en la pregunta —
 // "evaluar para enseñar": corregir → decir la correcta → explicar el porqué → invitar a seguir.
@@ -21,13 +40,18 @@ type EstadoEvaluacion = {
   /** El quiz nació de la ÚLTIMA microcápsula: al cerrarlo hay que apuntar al certificado y no
    *  invitar a "continuar" con una microcápsula que ya no existe. */
   finCurso?: boolean;
+  /** Metadatos curriculares de la actividad: tipo, consigna, criterio y mínimo requerido. */
+  interaccion?: Interaccion;
+  /** Cuántos ítems ya respondió, para las actividades con mínimo (cápsula 6). */
+  respondidos?: number;
 };
 
 const KEY = (waId: string) => `evaluacion:${waId}`;
 const PENDIENTE_KEY = (waId: string) => `quiz:pendiente:${waId}`;
 const TTL = 2 * 3600; // una evaluación abandonada expira a las 2h (el attempt queda abierto en BD)
 
-const LETRAS = ['A', 'B', 'C', 'D'];
+// Hasta 6: la clasificación de la cápsula 4 ofrece 5 categorías y con A-D no alcanzaban.
+const LETRAS = ['A', 'B', 'C', 'D', 'E', 'F'];
 /** Minúsculas sin acentos: el \b de JS es ASCII y trata "í" como no-palabra ("sí\b" fallaría). */
 const plano = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 const RE_INICIO = /\b(quiz|mini[- ]?quiz|evaluacion|practicar|prueba)\b/;
@@ -78,17 +102,33 @@ export function mapearRespuestaAOpcion(msg: InboundMessage, pregunta: PreguntaCo
   return null;
 }
 
-/** Envía una pregunta como mensaje interactivo: botones (V/F) o lista (selección múltiple). */
+/**
+ * Envía un ítem con la mejor afordancia disponible.
+ *
+ * En una CLASIFICACIÓN el enunciado es el fragmento a ubicar y las opciones son las categorías; la
+ * consigna general ya se envió al abrir la actividad, así que repetirla en cada ítem sería ruido.
+ */
 async function enviarPregunta(waId: string, provider: MessagingProvider, p: PreguntaConOpciones, pos: string): Promise<void> {
-  const cuerpo = `*Pregunta ${pos}*\n${p.enunciado}`;
-  if (p.tipo === 'verdadero_falso') {
-    await provider.enviarBotones(waId, cuerpo, p.opciones.map((o) => ({ id: `resp:${o.id}`, titulo: o.texto })));
-  } else {
-    await provider.enviarLista(
-      waId, cuerpo, 'Responder',
-      p.opciones.map((o, i) => ({ id: `resp:${o.id}`, titulo: LETRAS[i], descripcion: o.texto.slice(0, 72) })),
+  const cuerpo = p.tipo === 'clasificacion'
+    ? `*${pos}* · ¿Dónde ubicarías esto?\n\n“${p.itemTexto ?? p.enunciado}”`
+    : `*Pregunta ${pos}*\n${p.enunciado}`;
+
+  // Botones solo si TODAS las opciones caben enteras: el título de un botón de WhatsApp admite 20
+  // caracteres, y una categoría como "fuente/persona competente" quedaría cortada en "fuente/persona
+  // compe" — ilegible justo en la actividad donde entender la categoría es el aprendizaje. Cuando no
+  // caben se usa lista, cuya descripción admite 72.
+  const TOPE_BOTON = 20;
+  if (p.opciones.length <= 3 && p.opciones.every((o) => o.texto.length <= TOPE_BOTON)) {
+    await provider.enviarBotones(
+      waId, cuerpo,
+      p.opciones.map((o) => ({ id: `resp:${o.id}`, titulo: o.texto })),
     );
+    return;
   }
+  await provider.enviarLista(
+    waId, cuerpo, 'Responder',
+    p.opciones.slice(0, 10).map((o, i) => ({ id: `resp:${o.id}`, titulo: LETRAS[i] ?? String(i + 1), descripcion: o.texto.slice(0, 72) })),
+  );
 }
 
 export type ResultadoFlujoEval = { handled: boolean };
@@ -129,29 +169,49 @@ export async function manejarEvaluacion(
       return { handled: true };
     }
 
-    // Evaluar para enseñar: correcta → refuerzo; incorrecta → cuál era + porqué (explicación docente).
-    const feedback = r.esCorrecta
-      ? `✅ ¡Correcto!\n\n${r.explicacion}`
-      : `🤏 Casi. La respuesta correcta era: *${r.correctaTexto}*\n\n${r.explicacion}\n\nSi quieres repasarlo, dime y lo vemos juntos.`;
+    // Retroalimentación del ítem. El plan pide explicar el CRITERIO y no solo marcar correcto o
+    // incorrecto — y ese criterio es uno por actividad, así que va completo al CERRAR. Aquí solo
+    // un acuse breve, para que la persona sepa cómo le fue sin recibir seis veces el mismo párrafo.
+    const esUltimo = r.finalizado || !r.siguiente;
+    let feedback: string;
+    if (r.sinRespuestaCorrecta === true) {
+      // Cápsulas 6 y 8: la elección es legítima cualquiera sea. Llamarla "correcta" o "incorrecta"
+      // sería un error pedagógico, así que se acusa recibo y punto.
+      feedback = `✅ Anotado: *${r.elegidaTexto}*`;
+    } else if (r.esCorrecta) {
+      feedback = esUltimo ? '✅ Correcto.' : '✅ Correcto.';
+    } else {
+      feedback = `🤏 Casi. Ahí correspondía: *${r.correctaTexto}*`;
+    }
     await provider.enviarTexto(waId, feedback);
     void audit({ type: 'respuesta_evaluacion', dialogId: waId, detail: { quiz: estado.quizId, pregunta: estado.pregunta.orden, correcta: r.esCorrecta, tiempoMs } });
 
-    if (r.finalizado || !r.siguiente) {
+    const respondidos = (estado.respondidos ?? 0) + 1;
+    const minimo = estado.interaccion?.minimoRequerido ?? r.total;
+    // Una actividad con mínimo (la cápsula 6 pide "al menos dos") se cierra al alcanzarlo: obligar
+    // a recorrer los seis casos contradiría su propia consigna.
+    const alcanzoMinimo = respondidos >= minimo;
+
+    if (r.finalizado || !r.siguiente || alcanzoMinimo) {
       await kvDel(KEY(waId));
-      const nota = `${r.correctas}/${r.total}`;
-      const cierre = r.correctas === r.total
-        ? `🎉 *${nota}* ¡Impecable! Dominaste esta microcápsula.`
-        : `📘 Resultado: *${nota}*. Lo importante es lo que aprendiste en el camino — puedes repetirlo cuando quieras escribiendo *quiz*.`;
+      // El criterio del documento, completo y una sola vez. Es la retroalimentación que el plan
+      // manda entregar; el conteo de aciertos NO se muestra porque la certificación es por
+      // finalización y sin evaluación formal: poner una nota inventaría una exigencia.
+      const criterio = estado.interaccion?.retroalimentacion || r.explicacion;
       const siguientePaso = estado.finCurso
         ? 'Con esta terminaste todas las microcápsulas del curso 🎓 Escribe *certificado* para obtener el tuyo.'
         : '¿Seguimos con la próxima microcápsula? Escribe *continuar* cuando quieras.';
-      await provider.enviarTexto(waId, `${cierre}\n\n${siguientePaso}`);
-      void audit({ type: 'evaluacion_finalizada', dialogId: waId, detail: { quiz: estado.quizId, intento: estado.intentoN, correctas: r.correctas, total: r.total } });
+      await provider.enviarTexto(waId, `💡 ${criterio}\n\n${siguientePaso}`);
+      void audit({
+        type: 'evaluacion_finalizada',
+        dialogId: waId,
+        detail: { quiz: estado.quizId, intento: estado.intentoN, correctas: r.correctas, total: r.total, respondidos },
+      });
       return { handled: true };
     }
 
-    await setJson(KEY(waId), { ...estado, pregunta: r.siguiente, enviadaEn: Date.now() }, TTL);
-    await enviarPregunta(waId, provider, r.siguiente, `${r.siguiente.orden} de ${estado.total}`);
+    await setJson(KEY(waId), { ...estado, pregunta: r.siguiente, enviadaEn: Date.now(), respondidos }, TTL);
+    await enviarPregunta(waId, provider, r.siguiente, `${r.siguiente.orden} de ${Math.min(minimo, estado.total)}`);
     return { handled: true };
   }
 
@@ -189,16 +249,28 @@ async function iniciarQuiz(
   if (!pendiente) return false; // sin lecciones completadas con quiz: que el tutor explique
   const inicio = await iniciarAttempt(pendiente.enrollmentId, pendiente.quizId);
   if (!inicio) return false;
+  // Defensivo: si el registro viniera sin metadatos de interacción —un quiz cargado antes de la
+  // alineación curricular, o un doble en pruebas— se asume la forma más simple en vez de reventar
+  // el turno del estudiante.
+  const inter: Interaccion = inicio.interaccion ?? {
+    tipo: 'seleccion_unica', consigna: null, retroalimentacion: null, minimoRequerido: inicio.total,
+  };
   await setJson(KEY(waId), {
     attemptId: inicio.attemptId, quizId: inicio.quizId, titulo: inicio.titulo,
     intentoN: inicio.intentoN, total: inicio.total, pregunta: inicio.primera,
-    enviadaEn: Date.now(), finCurso,
+    enviadaEn: Date.now(), finCurso, interaccion: inter, respondidos: 0,
   } satisfies EstadoEvaluacion, TTL);
+
+  // La CONSIGNA del documento abre la actividad: es el enunciado curricular, y en una
+  // clasificación es lo único que explica qué se está pidiendo.
+  const cuantos = Math.min(inter.minimoRequerido, inicio.total);
+  const cabecera = `🧠 *Lo intento* — ${cuantos} ${cuantos > 1 ? 'respuestas' : 'respuesta'}` +
+    `${inicio.intentoN > 1 ? ` (intento ${inicio.intentoN})` : ''}. Es práctica: no hay nota.`;
   await provider.enviarTexto(
     waId,
-    `🧠 *${inicio.titulo}* — ${inicio.total} pregunta${inicio.total > 1 ? 's' : ''}${inicio.intentoN > 1 ? ` (intento ${inicio.intentoN})` : ''}. Esto es para practicar: no hay nota, solo aprendizaje. Escribe *salir* si prefieres seguir después.`,
+    inter.consigna ? `${cabecera}\n\n${inter.consigna}` : `${cabecera} Escribe *salir* si prefieres seguir después.`,
   );
-  await enviarPregunta(waId, provider, inicio.primera, `1 de ${inicio.total}`);
+  await enviarPregunta(waId, provider, inicio.primera, `1 de ${cuantos}`);
   void audit({ type: 'evaluacion_iniciada', dialogId: waId, detail: { quiz: inicio.quizId, intento: inicio.intentoN } });
   return true;
 }

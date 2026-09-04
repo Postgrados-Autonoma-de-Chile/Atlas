@@ -7,10 +7,28 @@ import { log } from '../log';
 export type PreguntaConOpciones = {
   id: string;
   orden: number;
-  tipo: 'seleccion_multiple' | 'verdadero_falso';
+  tipo: 'seleccion_multiple' | 'verdadero_falso' | 'clasificacion' | 'eleccion' | 'abierta';
   enunciado: string;
   explicacion: string;
+  /**
+   * Hay ítems SIN respuesta correcta por diseño curricular: la cápsula 6 pide elegir al menos dos
+   * casos de interés y la 8 elegir entre un problema propio o uno preparado — su documento dice
+   * que ambas opciones son válidas. Con esta bandera el flujo acusa recibo y entrega el criterio,
+   * sin calificar: llamar "incorrecta" a una elección legítima sería un error pedagógico.
+   */
+  sinRespuestaCorrecta: boolean;
+  /** En una clasificación, el fragmento que se está ubicando (las opciones son las categorías). */
+  itemTexto: string | null;
   opciones: { id: string; orden: number; texto: string; esCorrecta: boolean }[];
+};
+
+/** Metadatos del momento "Lo intento" que el plan curricular exige en cada microcápsula. */
+export type Interaccion = {
+  tipo: 'seleccion_unica' | 'clasificacion' | 'seleccion_multiple' | 'eleccion';
+  consigna: string | null;
+  /** Retroalimentación del documento: explica el CRITERIO. Se entrega UNA vez, al cerrar. */
+  retroalimentacion: string | null;
+  minimoRequerido: number;
 };
 
 export type QuizIniciado = {
@@ -20,6 +38,7 @@ export type QuizIniciado = {
   intentoN: number;
   total: number;
   primera: PreguntaConOpciones;
+  interaccion: Interaccion;
 };
 
 /** Quiz asociado a una lección (o null). */
@@ -97,12 +116,17 @@ export async function quizParaIniciar(personId: string): Promise<{ quizId: strin
 async function preguntaPorOrden(quizId: string, orden: number): Promise<PreguntaConOpciones | null> {
   const pool = getPool();
   if (!pool) return null;
-  const q = await pool.query(`SELECT id, orden, tipo, enunciado, explicacion FROM question WHERE quiz_id=$1 AND orden=$2`, [quizId, orden]);
+  const q = await pool.query(
+    `SELECT id, orden, tipo, enunciado, explicacion, sin_respuesta_correcta, item_texto
+       FROM question WHERE quiz_id=$1 AND orden=$2`,
+    [quizId, orden],
+  );
   const row = q.rows[0];
   if (!row) return null;
   const ops = await pool.query(`SELECT id, orden, texto, es_correcta FROM question_option WHERE question_id=$1 ORDER BY orden`, [row.id]);
   return {
     id: row.id, orden: row.orden, tipo: row.tipo, enunciado: row.enunciado, explicacion: row.explicacion,
+    sinRespuestaCorrecta: Boolean(row.sin_respuesta_correcta), itemTexto: row.item_texto ?? null,
     opciones: ops.rows.map((o: any) => ({ id: o.id, orden: o.orden, texto: o.texto, esCorrecta: o.es_correcta })),
   };
 }
@@ -114,7 +138,14 @@ export async function iniciarAttempt(enrollmentId: string, quizId: string): Prom
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const t = await client.query(`SELECT count(*)::int AS total, (SELECT titulo FROM quiz WHERE id=$1) AS titulo FROM question WHERE quiz_id=$1`, [quizId]);
+    const t = await client.query(
+      `SELECT count(q.id)::int AS total,
+              z.titulo, z.tipo_interaccion, z.consigna, z.retroalimentacion, z.minimo_requerido
+         FROM quiz z LEFT JOIN question q ON q.quiz_id = z.id
+        WHERE z.id = $1
+        GROUP BY z.titulo, z.tipo_interaccion, z.consigna, z.retroalimentacion, z.minimo_requerido`,
+      [quizId],
+    );
     const total = t.rows[0]?.total ?? 0;
     if (!total) { await client.query('ROLLBACK'); return null; }
     const n = await client.query(
@@ -129,7 +160,17 @@ export async function iniciarAttempt(enrollmentId: string, quizId: string): Prom
     await client.query('COMMIT');
     const primera = await preguntaPorOrden(quizId, 1);
     if (!primera) return null;
-    return { attemptId: a.rows[0].id, quizId, titulo: t.rows[0].titulo, intentoN, total, primera };
+    const f = t.rows[0];
+    return {
+      attemptId: a.rows[0].id, quizId, titulo: f.titulo, intentoN, total, primera,
+      interaccion: {
+        tipo: f.tipo_interaccion ?? 'seleccion_unica',
+        consigna: f.consigna ?? null,
+        retroalimentacion: f.retroalimentacion ?? null,
+        // El mínimo no puede exceder los ítems existentes, o la actividad nunca cerraría.
+        minimoRequerido: Math.min(Math.max(1, f.minimo_requerido ?? 1), total),
+      },
+    };
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
     log.error('evaluaciones: iniciarAttempt falló', { err: String(e) });
@@ -141,8 +182,11 @@ export async function iniciarAttempt(enrollmentId: string, quizId: string): Prom
 
 export type ResultadoRespuesta = {
   esCorrecta: boolean;
+  /** Vacío cuando la pregunta no tiene respuesta correcta por diseño. */
   correctaTexto: string;
   explicacion: string;
+  sinRespuestaCorrecta: boolean;
+  elegidaTexto: string;
   correctas: number;
   total: number;
   siguiente: PreguntaConOpciones | null;
@@ -158,7 +202,11 @@ export async function registrarRespuesta(
   if (!pool) return null;
   const elegida = pregunta.opciones.find((o) => o.id === optionId);
   const correcta = pregunta.opciones.find((o) => o.esCorrecta);
-  if (!elegida || !correcta) return null;
+  if (!elegida) return null;
+  // Sin respuesta correcta no hay "correcta" que buscar: la elección se registra tal cual. Exigir
+  // que exista, como antes, dejaba inutilizables las cápsulas 6 y 8 del plan.
+  if (!pregunta.sinRespuestaCorrecta && !correcta) return null;
+  const acertada = pregunta.sinRespuestaCorrecta ? true : elegida.esCorrecta;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -166,7 +214,7 @@ export async function registrarRespuesta(
       `INSERT INTO attempt_answer (attempt_id, question_id, option_id, es_correcta, tiempo_respuesta_ms, explicacion_enviada)
        VALUES ($1,$2,$3,$4,$5,$6)
        ON CONFLICT ON CONSTRAINT attempt_answer_unico DO NOTHING`,
-      [attemptId, pregunta.id, elegida.id, elegida.esCorrecta, tiempoMs, explicacionEnviada],
+      [attemptId, pregunta.id, elegida.id, acertada, tiempoMs, explicacionEnviada],
     );
     const upd = await client.query(
       `UPDATE quiz_attempt SET correctas = (SELECT count(*)::int FROM attempt_answer WHERE attempt_id=$1 AND es_correcta)
@@ -189,7 +237,14 @@ export async function registrarRespuesta(
         log.warn('evaluaciones: no se pudo leer la siguiente pregunta (respuesta ya guardada)', { err: String(e) });
       }
     }
-    return { esCorrecta: elegida.esCorrecta, correctaTexto: correcta.texto, explicacion: pregunta.explicacion, correctas, total, siguiente, finalizado };
+    return {
+      esCorrecta: acertada,
+      correctaTexto: correcta?.texto ?? '',
+      explicacion: pregunta.explicacion,
+      sinRespuestaCorrecta: pregunta.sinRespuestaCorrecta,
+      elegidaTexto: elegida.texto,
+      correctas, total, siguiente, finalizado,
+    };
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
     log.error('evaluaciones: registrarRespuesta falló', { err: String(e) });
