@@ -56,7 +56,9 @@ function armar(tipo: string, consigna: string, criterio: string, items: Item[], 
       registrarRespuesta: async (_a: string, _q: string, pregunta: any, optionId: string) => {
         const elegida = pregunta.opciones.find((o: any) => o.id === optionId);
         if (!elegida) return null;
-        registradas.push({ qid: pregunta.id, texto: elegida.texto });
+        // Fiel al almacén: ON CONFLICT DO NOTHING. La revisión del ítem no crea un segundo
+        // registro ni adelanta el cierre de la actividad.
+        if (!registradas.some((x) => x.qid === pregunta.id)) registradas.push({ qid: pregunta.id, texto: elegida.texto });
         const correcta = pregunta.opciones.find((o: any) => o.esCorrecta);
         const finalizado = registradas.length >= total;
         return {
@@ -166,19 +168,78 @@ test('clasificación: el criterio se entrega UNA vez al cerrar, no en cada ítem
   assert.equal(C7.registradas.length, 6, 'las seis clasificaciones quedaron registradas');
 });
 
-test('clasificación: una respuesta equivocada dice cuál correspondía, sin sermón', async () => {
+// ── Caso 4: responde incorrectamente ───────────────────────────────────────
+
+test('caso 4 — el primer error devuelve el ítem para revisarlo, sin revelar la respuesta', async () => {
+  // FUENTE: cada microcápsula exige «retroalimentación útil y no punitiva»; la 1 pide «Permitir
+  // "Revisar de nuevo" sin penalización», la 2 «Permitir corregir hasta completar» y la 4 «Debe
+  // permitir corrección inmediata». Decir de inmediato cuál correspondía clausura esa corrección.
+  nuevo();
+  C7.registradas.length = 0;
+  const { p, textos, listas } = fakeProvider();
+  await marcarQuizPendiente(DE, false);
+  await iniciarQuizPendiente(DE, PERSONA, p);
+  const antes = listas.length;
+
+  const mala = C7.preguntas[0].opciones.find((o: any) => !o.esCorrecta)!;
+  await manejarEvaluacion(btn(`resp:${mala.id}`, mala.texto), PERSONA, p);
+
+  assert.match(textos.at(-1)!, /Revisémoslo/, 'se invita a revisar');
+  assert.doesNotMatch(textos.join(' '), /correspondía/,
+    'todavía no: revelar la correcta dejaría nada que revisar');
+  assert.doesNotMatch(textos.join(' '), /incorrect/i, 'la retroalimentación no es punitiva');
+  assert.equal(listas.length, antes + 1, 'el MISMO ítem vuelve con sus alternativas');
+  assert.match(listas.at(-1)!.cuerpo, /Ordenar ideas para una presentación/,
+    'es el ítem que falló, no el siguiente');
+});
+
+test('caso 4 — si acierta al revisar, se reconoce y sigue', async () => {
+  nuevo();
+  C7.registradas.length = 0;
+  const { p, textos, listas } = fakeProvider();
+  await marcarQuizPendiente(DE, false);
+  await iniciarQuizPendiente(DE, PERSONA, p);
+
+  const mala = C7.preguntas[0].opciones.find((o: any) => !o.esCorrecta)!;
+  await manejarEvaluacion(btn(`resp:${mala.id}`, mala.texto), PERSONA, p);
+  const buena = C7.preguntas[0].opciones.find((o: any) => o.esCorrecta)!;
+  await manejarEvaluacion(btn(`resp:${buena.id}`, buena.texto), PERSONA, p);
+
+  assert.match(textos.join(' '), /Ahí está/, 'el acierto tras revisar se reconoce igual');
+  assert.match(listas.at(-1)!.cuerpo, /Confirmar la fecha oficial/, 'y se avanza al ítem 2');
+  assert.equal(C7.registradas.length, 1,
+    'la revisión no cuenta como un ítem más: el mínimo de la actividad no se altera');
+});
+
+test('caso 4 — la revisión es UNA por ítem: al segundo error se dice cuál correspondía', async () => {
+  // Dos revisiones serían adivinar por descarte, y con tres categorías nadie debe quedar atrapado.
   nuevo();
   C7.registradas.length = 0;
   const { p, textos } = fakeProvider();
   await marcarQuizPendiente(DE, false);
   await iniciarQuizPendiente(DE, PERSONA, p);
-  // El primer ítem es "IA puede ayudar"; se responde la categoría equivocada.
-  const mala = C7.preguntas[0].opciones.find((o: any) => !o.esCorrecta)!;
-  await manejarEvaluacion(btn(`resp:${mala.id}`, mala.texto), PERSONA, p);
-  const f = textos.at(-2) ?? textos.at(-1)!;
-  assert.match(textos.join(' '), /correspondía/);
-  assert.doesNotMatch(textos.join(' '), /incorrecto/i, 'no se usa la palabra incorrecto');
-  void f;
+
+  const malas = C7.preguntas[0].opciones.filter((o: any) => !o.esCorrecta);
+  await manejarEvaluacion(btn(`resp:${malas[0].id}`, malas[0].texto), PERSONA, p);
+  await manejarEvaluacion(btn(`resp:${malas[1].id}`, malas[1].texto), PERSONA, p);
+
+  assert.match(textos.join(' '), /correspondía/, 'ahora sí se muestra la que correspondía');
+  assert.equal(textos.filter((t) => /Revisémoslo/.test(t)).length, 1, 'una sola revisión');
+  assert.doesNotMatch(textos.join(' '), /incorrect/i);
+});
+
+test('en una elección sin respuesta correcta NUNCA se pide revisar', async () => {
+  // Las cápsulas 6 y 8: mandar a "revisar" una elección legítima sería tratarla como un error.
+  const C8 = armar(
+    'eleccion',
+    'Elige cómo quieres realizar la actividad final.',
+    'Ambas opciones permiten demostrar la misma ruta.',
+    [{ texto: 'Trabajar con una situación propia.' }, { texto: 'Elegir un caso preparado.' }],
+    1,
+  );
+  const r = await C8.exports.registrarRespuesta('a1', 'z1', C8.preguntas[0], 'q1o2');
+  assert.equal(r!.sinRespuestaCorrecta, true);
+  assert.equal(r!.esCorrecta, true, 'sin error que revisar');
 });
 
 test('la clasificación de 5 categorías usa lista, no botones', async () => {

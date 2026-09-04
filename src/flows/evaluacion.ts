@@ -44,6 +44,8 @@ type EstadoEvaluacion = {
   interaccion?: Interaccion;
   /** Cuántos ítems ya respondió, para las actividades con mínimo (cápsula 6). */
   respondidos?: number;
+  /** Este ítem ya tuvo su revisión sin penalización: la próxima respuesta cierra y avanza. */
+  reintentado?: boolean;
 };
 
 const KEY = (waId: string) => `evaluacion:${waId}`;
@@ -169,19 +171,37 @@ export async function manejarEvaluacion(
       return { handled: true };
     }
 
+    const cuantosItems = Math.min(estado.interaccion?.minimoRequerido ?? estado.total, estado.total);
+
+    // ── Refuerzo ante una respuesta equivocada ────────────────────────────────
+    // El material lo define en cada microcápsula: «retroalimentación útil y no punitiva»,
+    // «Permitir "Revisar de nuevo" sin penalización» (cápsula 1), «Permitir corregir hasta
+    // completar» (2), «Debe permitir corrección inmediata» (4).
+    //
+    // Decir de inmediato cuál correspondía CLAUSURA esa corrección: ya no queda nada que revisar.
+    // Así que en el primer error se devuelve el ítem una vez, sin revelar la respuesta y sin
+    // penalización; la alternativa correcta se muestra recién después de esa segunda vuelta. Una
+    // sola revisión por ítem: dos ya sería adivinar por descarte, y nadie queda atrapado.
+    if (!r.sinRespuestaCorrecta && !r.esCorrecta && !estado.reintentado) {
+      await setJson(KEY(waId), { ...estado, reintentado: true, enviadaEn: Date.now() }, TTL);
+      await provider.enviarTexto(waId, 'Revisémoslo juntos 🤔 Esa no es la que mejor calza. No pasa nada: mira otra vez las alternativas y elige la que te parezca.');
+      await enviarPregunta(waId, provider, estado.pregunta, `${estado.pregunta.orden} de ${cuantosItems}`);
+      void audit({ type: 'refuerzo_evaluacion', dialogId: waId, detail: { quiz: estado.quizId, pregunta: estado.pregunta.orden } });
+      return { handled: true };
+    }
+
     // Retroalimentación del ítem. El plan pide explicar el CRITERIO y no solo marcar correcto o
     // incorrecto — y ese criterio es uno por actividad, así que va completo al CERRAR. Aquí solo
     // un acuse breve, para que la persona sepa cómo le fue sin recibir seis veces el mismo párrafo.
-    const esUltimo = r.finalizado || !r.siguiente;
     let feedback: string;
     if (r.sinRespuestaCorrecta === true) {
       // Cápsulas 6 y 8: la elección es legítima cualquiera sea. Llamarla "correcta" o "incorrecta"
       // sería un error pedagógico, así que se acusa recibo y punto.
       feedback = `✅ Anotado: *${r.elegidaTexto}*`;
     } else if (r.esCorrecta) {
-      feedback = esUltimo ? '✅ Correcto.' : '✅ Correcto.';
+      feedback = estado.reintentado ? '✅ Ahí está.' : '✅ Correcto.';
     } else {
-      feedback = `🤏 Casi. Ahí correspondía: *${r.correctaTexto}*`;
+      feedback = `🤏 Ahí correspondía: *${r.correctaTexto}*`;
     }
     await provider.enviarTexto(waId, feedback);
     void audit({ type: 'respuesta_evaluacion', dialogId: waId, detail: { quiz: estado.quizId, pregunta: estado.pregunta.orden, correcta: r.esCorrecta, tiempoMs } });
@@ -210,7 +230,7 @@ export async function manejarEvaluacion(
       return { handled: true };
     }
 
-    await setJson(KEY(waId), { ...estado, pregunta: r.siguiente, enviadaEn: Date.now(), respondidos }, TTL);
+    await setJson(KEY(waId), { ...estado, pregunta: r.siguiente, enviadaEn: Date.now(), respondidos, reintentado: false }, TTL);
     await enviarPregunta(waId, provider, r.siguiente, `${r.siguiente.orden} de ${Math.min(minimo, estado.total)}`);
     return { handled: true };
   }

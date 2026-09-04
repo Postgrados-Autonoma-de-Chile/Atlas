@@ -38,6 +38,7 @@ Dictaba **otro curso**. No le faltaban piezas: los contenidos no coincidían.
 | Guion del Anfitrión de apertura y cierre | Microcápsulas 01-08 §5 | Se carga textual y se expone al tutor como contenido curricular | `curriculo/nivel1.json`, `src/store/cursos.ts` |
 | Al menos una acción del participante por cápsula | Plan Nacional §Criterios de implementación | Momento "Lo intento" con 4 tipos de interacción | `src/flows/evaluacion.ts`, `src/store/evaluaciones.ts` |
 | Retroalimentar el **criterio**, no "correcto/incorrecto" | Microcápsula 02 §9 | Acuse breve por ítem; criterio del documento completo, una sola vez, al cerrar | `src/flows/evaluacion.ts` |
+| Refuerzo no punitivo: revisar de nuevo sin penalización | Microcápsulas 01 §7 · 02 §7 · 04 §7 · checklist «retroalimentación útil y no punitiva» | Ante el primer error el ítem vuelve una vez, sin revelar la respuesta; la alternativa correcta se muestra recién después | `src/flows/evaluacion.ts` |
 | Certificación por finalización, sin evaluación formal | Plan Nacional §Cierre | Se eliminó el puntaje del cierre; el prompt prohíbe hablar de notas | `src/flows/evaluacion.ts`, `src/core/channel.ts` |
 | Cuestionario de caracterización primero | Cuestionario (Ajustado) | Flujo determinista de 11 preguntas; ruta bloqueada hasta completarlo | `src/flows/caracterizacion.ts`, `src/store/caracterizacion.ts`, `src/ai/toolRunner.ts` |
 | Producto de cierre: ficha de 5 campos | Plan Nacional §Producto de cierre · Microcápsula 08 | Flujo de 5 campos = 5 pasos; su completitud completa la cápsula 8 | `src/flows/fichaCierre.ts`, `src/store/fichaCierre.ts` |
@@ -66,6 +67,14 @@ de trato.
 de interés y la 8 elegir entre un problema propio o uno preparado — su documento dice que ambas son
 válidas. Se marcan con `question.sin_respuesta_correcta`: llamarlas "correctas" falsearía la
 retroalimentación.
+
+**El refuerzo no revela la respuesta en el primer intento.** El material pide permitir corregir
+—«Permitir "Revisar de nuevo" sin penalización» (cápsula 1), «Permitir corregir hasta completar»
+(2), «Debe permitir corrección inmediata» (4)— y decir de inmediato cuál correspondía clausura esa
+corrección: no queda nada que revisar. Así que el ítem vuelve una vez, sin la respuesta. Una sola
+revisión: dos serían adivinar por descarte con tres categorías. El registro en base de datos
+conserva la **primera** respuesta, no la corregida; es un log de la interacción, no una nota, y
+nada en la certificación lo usa.
 
 **El bloqueo de la ruta vive en el estado, no en el prompt.** `inscribirme_al_curso` y
 `continuar_curso` verifican la caracterización. Ponerlo solo en el prompt permitiría que el modelo
@@ -143,6 +152,11 @@ responde con las descripciones y no con el material completo.
 
 **El momento "Me llevo una herramienta"** (la pauta reutilizable de cada cápsula) no se entrega como
 pieza aparte: hoy vive dentro del guion de cierre. El plan lo define como recurso propio, exportable.
+
+**La retroalimentación por ítem no existe en la fuente.** Las cápsulas 5 y 7 piden en su diseño web
+«explicación breve por tarjeta» y «retroalimentación matizada» para los casos frontera, pero el
+documento entrega un solo párrafo de «Retroalimentación prevista» por actividad. Redactar uno por
+ítem sería escribir currículo, así que el criterio se entrega completo al cerrar.
 
 **El campo personal opcional de la cápsula 2** tiene tabla y lector, pero el flujo que lo ofrece
 durante esa cápsula no está implementado — hoy solo se recupera si existe.

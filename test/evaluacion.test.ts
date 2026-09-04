@@ -50,7 +50,8 @@ mock.module('../src/store/evaluaciones.ts', {
     registrarRespuesta: async (attemptId: string, _quizId: string, pregunta: any, optionId: string, tiempoMs: number | null) => {
       const att = attempts.get(attemptId)!;
       const elegida = pregunta.opciones.find((o: any) => o.id === optionId);
-      att.respuestas.push({ qid: pregunta.id, ok: elegida.esCorrecta, tiempoMs });
+      // Fiel al almacén (ON CONFLICT DO NOTHING): revisar un ítem no crea un segundo registro.
+      if (!att.respuestas.some((x) => x.qid === pregunta.id)) att.respuestas.push({ qid: pregunta.id, ok: elegida.esCorrecta, tiempoMs });
       const finalizado = att.respuestas.length >= 2;
       return {
         esCorrecta: elegida.esCorrecta,
@@ -127,7 +128,15 @@ test('ciclo completo: "Lo intento" abre con la consigna, acusa cada ítem y cier
   assert.equal(botones.length, 1, 'la V/F va como botones');
   assert.deepEqual(botones[0].ids, ['resp:o2v', 'resp:o2f']);
 
-  // Respuesta incorrecta por texto → cuál era la correcta + explicación + resumen final
+  // Respuesta incorrecta por texto → primero la revisión que el material exige («Permitir
+  // "Revisar de nuevo" sin penalización»), sin revelar todavía la alternativa correcta.
+  r = await manejarEvaluacion(texto(from, 'verdadero'), PERSONA as any, p);
+  assert.equal(r.handled, true);
+  assert.match(textos.at(-1)!, /Revisémoslo/);
+  assert.doesNotMatch(textos.join(' '), /correspondía/, 'todavía no: quedaría nada que revisar');
+  assert.equal(botones.length, 2, 'el MISMO ítem vuelve con sus botones');
+
+  // Insiste en la misma → ahí sí cuál correspondía, el criterio y el traspaso.
   r = await manejarEvaluacion(texto(from, 'verdadero'), PERSONA as any, p);
   assert.equal(r.handled, true);
   const feedback = textos.at(-2)!;
