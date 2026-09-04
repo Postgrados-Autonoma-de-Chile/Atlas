@@ -1,0 +1,602 @@
+{
+  "version": "nivel1-2026-09",
+  "fuente": "Material Curricular_ PLAN _Alfabetización Ciudadana en Inteligencia Artificial_",
+  "curso": {
+    "codigo": "NIVEL-1-IA-PROBLEMAS",
+    "nombre": "Nivel Inicial: Alfabetización ciudadana en Inteligencia Artificial",
+    "descripcion": "IA para resolver problemas diarios. Microlearning de 40 a 60 minutos en 8 microcápsulas de 5 a 7 minutos.",
+    "proposito": "Promover una alfabetización básica en inteligencia artificial para la ciudadanía, mediante microcápsulas breves que permitan utilizar herramientas de IA para buscar, organizar y analizar información, comparar alternativas y apoyar la resolución de problemas cotidianos de manera responsable.",
+    "competencia": "Comprende conceptos básicos de inteligencia artificial, reconoce sus usos cotidianos y laborales, e identifica formas simples de utilizar información y herramientas de IA para resolver problemas diarios de manera responsable.",
+    "resultados_generales": [
+      "Reconocer usos básicos de la IA como apoyo para comprender y abordar problemas cotidianos.",
+      "Formular necesidades y solicitudes simples, y utilizar la IA para organizar y comparar información.",
+      "Verificar información, reconocer límites de la IA y utilizar sus respuestas como apoyo para tomar decisiones."
+    ],
+    "certificacion": "finalizacion",
+    "producto_cierre": "Ficha breve de resolución de problema con apoyo de IA: problema identificado, pregunta formulada, respuesta obtenida, verificación básica y decisión o acción posible."
+  },
+  "ruta": [
+    {
+      "codigo": "DEFINO",
+      "descripcion": "Comprendo qué necesito resolver, qué información tengo y qué condiciones debo considerar."
+    },
+    {
+      "codigo": "PREGUNTO",
+      "descripcion": "Transformo la necesidad en una solicitud clara para la IA, entregando contexto, condiciones y el resultado esperado."
+    },
+    {
+      "codigo": "ORGANIZO",
+      "descripcion": "Pido a la IA que presente la información de una forma útil: listas, tablas, pasos, ventajas y desventajas o criterios de comparación."
+    },
+    {
+      "codigo": "VERIFICO",
+      "descripcion": "Reviso aquello que importa: fuente, fecha, coincidencia con información confiable y consecuencias de un posible error."
+    },
+    {
+      "codigo": "DECIDO",
+      "descripcion": "Utilizo la respuesta como apoyo, reconozco sus límites y defino personalmente el próximo paso o la fuente competente que corresponde consultar."
+    }
+  ],
+  "microcapsulas": [
+    {
+      "orden": 1,
+      "titulo": "IA como apoyo para resolver problemas cotidianos",
+      "paso_ruta": "ENTRADA",
+      "duracion_min": 6,
+      "proposito": "Comprender que la inteligencia artificial puede apoyar la organización de ideas, la exploración de alternativas, la comparación de información y la planificación de acciones, sin reemplazar la decisión de la persona.",
+      "pregunta_movilizadora": "¿Para qué podría servirme realmente una IA?",
+      "producto_evidencia": "Selección razonada de usos adecuados de IA frente a un problema cotidiano.",
+      "resultados_observables": [
+        "Reconoce al menos tres formas en que una IA puede apoyar una tarea cotidiana.",
+        "Distingue entre “apoyar una decisión” y “tomar la decisión por la persona”.",
+        "Identifica que una necesidad bien definida mejora la utilidad de la interacción con IA."
+      ],
+      "guion_apertura": "A veces tenemos un problema bastante simple, pero no sabemos por dónde empezar: elegir un curso, organizar un viaje, entender un trámite o comparar opciones. Una inteligencia artificial puede ayudarnos a ordenar esas ideas. Pero hay algo importante: no decide por nosotros. En esta cápsula veremos cómo puede convertirse en una ayuda para empezar.",
+      "guion_cierre": "Ya vimos que la IA puede ayudarnos a ordenar un problema y explorar alternativas. Pero antes de preguntarle cualquier cosa, necesitamos entender bien nuestra propia necesidad. Una pregunta poco clara suele producir una respuesta poco útil. Eso es justamente lo que veremos ahora.",
+      "tipo": "capsula",
+      "interaccion": {
+        "tipo": "seleccion_unica",
+        "consigna": "Carolina necesita elegir entre distintas capacitaciones. ¿Cuál de estas acciones describe mejor cómo puede ayudarla una IA?",
+        "retroalimentacion": "La IA puede ayudar a ordenar y comparar información. La decisión final depende de Carolina y de la información que ella verifique.",
+        "minimo_requerido": 1,
+        "items": [
+          {
+            "texto": "Comparar criterios y organizar alternativas para que Carolina pueda revisarlas.",
+            "categoria": null,
+            "correcta": true
+          },
+          {
+            "texto": "Elegir automáticamente el curso “correcto” sin que Carolina revise nada.",
+            "categoria": null,
+            "correcta": false
+          },
+          {
+            "texto": "Garantizar que una capacitación le conseguirá un empleo.",
+            "categoria": null,
+            "correcta": false
+          },
+          {
+            "texto": "Decidir cuánto dinero debería gastar.",
+            "categoria": null,
+            "correcta": false
+          }
+        ]
+      },
+      "fuente": "Microcapsula_01_IA_como_apoyo_para_resolver_problemas_cotidianos.txt"
+    },
+    {
+      "orden": 2,
+      "titulo": "Cómo describir un problema de manera clara",
+      "paso_ruta": "DEFINO",
+      "duracion_min": 6,
+      "proposito": "Aprender a convertir una necesidad general en una situación suficientemente clara para poder pedir apoyo útil a una herramienta de IA.",
+      "pregunta_movilizadora": "¿Tengo claro lo que realmente necesito resolver?",
+      "producto_evidencia": "Problema descrito mediante cuatro elementos: situación, necesidad, información disponible y condiciones.",
+      "resultados_observables": [
+        "Identifica la diferencia entre una necesidad vaga y un problema descrito con información útil.",
+        "Utiliza cuatro preguntas para delimitar una situación cotidiana.",
+        "Reconoce qué antecedentes son relevantes y cuáles no es necesario compartir."
+      ],
+      "guion_apertura": "Decir “necesito ayuda con mi trabajo” puede significar muchas cosas. ¿Quieres encontrar otro empleo, organizar mejor tu tiempo o aprender algo nuevo? Antes de preguntarle a una inteligencia artificial tenemos que hacer algo nosotros: entender bien qué queremos resolver. No tiene que ser complicado. Basta con ordenar algunas ideas.",
+      "guion_cierre": "Cuando puedes explicar claramente qué está pasando, qué necesitas y qué condiciones tienes, ya avanzaste bastante. El siguiente paso es transformar esa necesidad en una pregunta o instrucción que la IA pueda entender y responder de una manera más útil.",
+      "tipo": "capsula",
+      "interaccion": {
+        "tipo": "clasificacion",
+        "consigna": "Lee el caso y clasifica cada fragmento: ¿qué ocurre?, ¿qué se necesita?, ¿qué información ya existe? o ¿qué condición debe considerarse?",
+        "retroalimentacion": "Una descripción útil no necesita ser extensa: debe contener la información que permita comprender la situación, la necesidad y las condiciones relevantes.",
+        "minimo_requerido": 4,
+        "items": [
+          {
+            "texto": "Trabajo en ventas actualmente.",
+            "categoria": "Qué ocurre",
+            "correcta": null
+          },
+          {
+            "texto": "Quiero explorar empleos administrativos.",
+            "categoria": "Qué necesito",
+            "correcta": null
+          },
+          {
+            "texto": "Tengo experiencia en atención de clientes.",
+            "categoria": "Qué información tengo",
+            "correcta": null
+          },
+          {
+            "texto": "Necesito opciones compatibles con horario diurno.",
+            "categoria": "Qué condiciones debo considerar",
+            "correcta": null
+          }
+        ]
+      },
+      "fuente": "Microcapsula_02_Cómo_describir_un_problema_de_manera_clara.txt"
+    },
+    {
+      "orden": 3,
+      "titulo": "Cómo pedir información útil a una IA",
+      "paso_ruta": "PREGUNTO",
+      "duracion_min": 7,
+      "proposito": "Transformar un problema claro en una pregunta o instrucción útil para una herramienta de IA, comprendiendo que la solicitud puede mejorarse progresivamente.",
+      "pregunta_movilizadora": "¿Cómo explico a una IA lo que necesito?",
+      "producto_evidencia": "Solicitud construida con cuatro componentes: necesidad, contexto, condiciones y resultado esperado.",
+      "resultados_observables": [
+        "Reconoce los cuatro componentes de una solicitud útil.",
+        "Mejora una solicitud genérica agregando información relevante.",
+        "Comprende que puede reformular, pedir aclaraciones o cambiar el formato si la primera respuesta no sirve."
+      ],
+      "guion_apertura": "No necesitas aprender palabras técnicas para conversar con una inteligencia artificial. Lo importante es explicar bien qué necesitas. Puedes hacerlo como se lo explicarías a otra persona: diciendo qué quieres, entregando el contexto necesario, mencionando tus condiciones y explicando qué tipo de resultado esperas.",
+      "guion_cierre": "No existe una pregunta perfecta. Si la primera respuesta no te sirve, puedes agregar información, aclarar lo que necesitas o pedir otro formato. Conversar con una IA también es ir mejorando la solicitud. Y eso nos lleva al siguiente paso: organizar la información para poder usarla.",
+      "tipo": "capsula",
+      "interaccion": {
+        "tipo": "seleccion_unica",
+        "consigna": "Una persona quiere comparar capacitaciones online compatibles con su trabajo. ¿Cuál solicitud entrega mejor la información necesaria?",
+        "retroalimentacion": "La solicitud más útil explicita la necesidad, el contexto, una condición relevante y el tipo de resultado esperado. Eso permite una respuesta más ajustada sin delegar la decisión final.",
+        "minimo_requerido": 1,
+        "items": [
+          {
+            "texto": "¿Qué curso hago?",
+            "categoria": null,
+            "correcta": false
+          },
+          {
+            "texto": "Recomiéndame algo bueno para estudiar.",
+            "categoria": null,
+            "correcta": false
+          },
+          {
+            "texto": "Quiero comparar capacitaciones para mejorar mis oportunidades laborales. Trabajo de día y necesito modalidad online. Indícame criterios para compararlas en una tabla.",
+            "categoria": null,
+            "correcta": true
+          },
+          {
+            "texto": "Dime cuál es el mejor curso que existe.",
+            "categoria": null,
+            "correcta": false
+          }
+        ]
+      },
+      "fuente": "Microcapsula_03_Cómo_pedir_información_útil_a_una_IA.txt"
+    },
+    {
+      "orden": 4,
+      "titulo": "Cómo comparar alternativas y organizar respuestas",
+      "paso_ruta": "ORGANIZO",
+      "duracion_min": 6,
+      "proposito": "Aprender a solicitar que la IA organice la información en formatos que faciliten comprender, comparar y actuar.",
+      "pregunta_movilizadora": "¿Cómo hago que una respuesta me resulte realmente útil?",
+      "producto_evidencia": "Selección del formato de respuesta adecuado para una necesidad: lista, tabla, pasos, ventajas/desventajas o criterios.",
+      "resultados_observables": [
+        "Relaciona distintos formatos de salida con diferentes necesidades.",
+        "Formula una instrucción sencilla para reorganizar una respuesta.",
+        "Comprende que puede pedir cambios de formato sin reiniciar necesariamente la conversación."
+      ],
+      "guion_apertura": "A veces una inteligencia artificial nos entrega una respuesta larga y pensamos: “Bueno… ¿y ahora qué hago con todo esto?”. Una ventaja es que podemos pedirle que reorganice la información hasta que resulte útil para nosotros: en una tabla, una lista, pasos o criterios para comparar.",
+      "guion_cierre": "Ya vimos que no tenemos que conformarnos con el primer formato de respuesta. Podemos pedir que la información se ordene para entenderla mejor. Pero hay algo importante: una respuesta puede verse clara y ordenada, y aun así contener errores. Por eso, el siguiente paso es verificar.",
+      "tipo": "capsula",
+      "interaccion": {
+        "tipo": "clasificacion",
+        "consigna": "Relaciona cada necesidad con el formato que probablemente facilite más la tarea.",
+        "retroalimentacion": "No existe un formato único para todas las preguntas. Elegir cómo se organiza la información ayuda a leerla, compararla y utilizarla de acuerdo con la necesidad.",
+        "minimo_requerido": 5,
+        "items": [
+          {
+            "texto": "Comparar tres alternativas",
+            "categoria": "tabla",
+            "correcta": null
+          },
+          {
+            "texto": "Saber qué hacer en orden",
+            "categoria": "pasos",
+            "correcta": null
+          },
+          {
+            "texto": "Explorar posibles ideas",
+            "categoria": "lista",
+            "correcta": null
+          },
+          {
+            "texto": "Evaluar puntos favorables y desfavorables",
+            "categoria": "ventajas/desventajas",
+            "correcta": null
+          },
+          {
+            "texto": "Definir qué aspectos revisar",
+            "categoria": "criterios",
+            "correcta": null
+          }
+        ]
+      },
+      "fuente": "Microcapsula_04_Cómo_comparar_alternativas_y_organizar_respuestas.txt"
+    },
+    {
+      "orden": 5,
+      "titulo": "Cómo verificar si la información es confiable",
+      "paso_ruta": "VERIFICO",
+      "duracion_min": 7,
+      "proposito": "Desarrollar un hábito básico de verificación antes de utilizar información entregada por una IA, especialmente cuando puede influir en una decisión.",
+      "pregunta_movilizadora": "¿Puedo confiar en esta respuesta tal como está?",
+      "producto_evidencia": "Aplicación de cuatro preguntas de verificación: fuente, fecha, coincidencia y consecuencia.",
+      "resultados_observables": [
+        "Reconoce que una respuesta convincente puede contener errores.",
+        "Aplica cuatro preguntas para decidir qué debe comprobar.",
+        "Distingue entre usos de bajo riesgo y situaciones que requieren contrastar con fuentes confiables."
+      ],
+      "guion_apertura": "Una respuesta de inteligencia artificial puede sonar segura, estar muy bien escrita e incluso parecer totalmente lógica… y aun así contener un error. Por eso hay algo que nunca deberíamos delegar completamente: comprobar la información cuando importa. No se trata de desconfiar de todo, sino de saber cuándo conviene revisar.",
+      "guion_cierre": "Verificar no significa desconfiar de todo. Significa saber cuándo una información merece una segunda mirada. Si puede afectar una decisión importante, buscamos una fuente confiable antes de actuar. Ahora vamos a usar todo lo aprendido en situaciones distintas de la vida diaria.",
+      "tipo": "capsula",
+      "interaccion": {
+        "tipo": "clasificacion",
+        "consigna": "Clasifica cada situación según si puedes usar la respuesta como orientación inicial o si conviene comprobarla antes de actuar.",
+        "retroalimentacion": "El nivel de verificación depende de la consecuencia de equivocarse y de si la información es oficial, cambiante o sensible.",
+        "minimo_requerido": 6,
+        "items": [
+          {
+            "texto": "Ideas de nombres para un emprendimiento",
+            "categoria": "orientación inicial",
+            "correcta": null
+          },
+          {
+            "texto": "Fecha límite de una postulación",
+            "categoria": "comprobar",
+            "correcta": null
+          },
+          {
+            "texto": "Ideas para ordenar una lista de tareas",
+            "categoria": "orientación inicial",
+            "correcta": null
+          },
+          {
+            "texto": "Requisitos oficiales de un trámite",
+            "categoria": "comprobar",
+            "correcta": null
+          },
+          {
+            "texto": "Sugerencias de preguntas para una reunión",
+            "categoria": "orientación inicial",
+            "correcta": null
+          },
+          {
+            "texto": "Valor actual de un beneficio",
+            "categoria": "comprobar",
+            "correcta": null
+          }
+        ]
+      },
+      "fuente": "Microcapsula_05_Cómo_verificar_si_la_información_es_confiable.txt"
+    },
+    {
+      "orden": 6,
+      "titulo": "Ejemplos prácticos de uso diario",
+      "paso_ruta": "APLICO",
+      "duracion_min": 7,
+      "proposito": "Transferir la ruta de trabajo con IA a distintos contextos cotidianos, demostrando que el mismo método puede adaptarse a empleo, estudio, hogar, emprendimiento y trámites.",
+      "pregunta_movilizadora": "¿Dónde podría aplicar esto en mi vida cotidiana?",
+      "producto_evidencia": "Exploración de al menos dos casos y selección de un contexto personal de posible uso.",
+      "resultados_observables": [
+        "Reconoce aplicaciones de la ruta en al menos dos contextos cotidianos.",
+        "Distingue el mismo patrón de trabajo aunque cambie la situación.",
+        "Selecciona un contexto en el que podría usar IA como apoyo."
+      ],
+      "guion_apertura": "Hasta ahora hemos trabajado con algunos ejemplos. Pero una inteligencia artificial puede ser útil en situaciones muy distintas. El mismo método puede ayudarnos a organizar una búsqueda de empleo, estudiar, preparar un trámite o comparar alternativas para el hogar. No se trata de usar IA para todo, sino de reconocer cuándo realmente puede aportar.",
+      "guion_cierre": "Como viste, el problema puede cambiar y la ruta sigue siendo útil: definir, preguntar, organizar y verificar. Pero no todas las decisiones deberían apoyarse de la misma manera en una IA. En la próxima cápsula veremos con claridad dónde puede ayudarnos y dónde necesitamos otra fuente o una persona competente.",
+      "tipo": "capsula",
+      "interaccion": {
+        "tipo": "seleccion_multiple",
+        "consigna": "Selecciona al menos dos situaciones para ver cómo se aplica la misma ruta.",
+        "retroalimentacion": "No necesitas revisar todos los casos. El objetivo es reconocer que la ruta puede adaptarse a necesidades distintas.",
+        "minimo_requerido": 2,
+        "items": [
+          {
+            "texto": "Trabajo",
+            "categoria": null,
+            "correcta": null
+          },
+          {
+            "texto": "Búsqueda de empleo",
+            "categoria": null,
+            "correcta": null
+          },
+          {
+            "texto": "Estudio",
+            "categoria": null,
+            "correcta": null
+          },
+          {
+            "texto": "Emprendimiento",
+            "categoria": null,
+            "correcta": null
+          },
+          {
+            "texto": "Hogar",
+            "categoria": null,
+            "correcta": null
+          },
+          {
+            "texto": "Trámites",
+            "categoria": null,
+            "correcta": null
+          }
+        ]
+      },
+      "fuente": "Microcapsula_06_Ejemplos_prácticos_de_uso_diario.txt"
+    },
+    {
+      "orden": 7,
+      "titulo": "Límites de la IA en la toma de decisiones",
+      "paso_ruta": "DECIDO",
+      "duracion_min": 6,
+      "proposito": "Distinguir situaciones en las que la IA puede apoyar, aquellas en las que la información debe verificarse y aquellas que requieren una fuente oficial, especialista o persona competente.",
+      "pregunta_movilizadora": "¿Cuándo puedo apoyarme en IA y cuándo necesito otra fuente?",
+      "producto_evidencia": "Clasificación razonada de situaciones en tres niveles de apoyo: IA puede ayudar, IA + verificación, y fuente/persona competente.",
+      "resultados_observables": [
+        "Identifica usos apropiados de IA como apoyo.",
+        "Reconoce información que requiere verificación adicional.",
+        "Distingue decisiones o situaciones que requieren intervención de una fuente oficial o profesional competente."
+      ],
+      "guion_apertura": "La inteligencia artificial puede ayudarnos a pensar una decisión, pero existen situaciones que no deberíamos dejar en sus manos. Cuando hay salud, dinero, derechos, seguridad o consecuencias importantes, necesitamos saber dónde termina la ayuda de una IA y dónde empieza la responsabilidad de una persona, una institución o un especialista.",
+      "guion_cierre": "La mejor decisión no es la que toma la IA. Es la que tú puedes tomar con mejor información, después de revisar aquello que importa y consultar a quien corresponda cuando sea necesario. Ya tenemos toda la ruta. Ahora vamos a usarla completa en un problema real o en un caso que elijas.",
+      "tipo": "capsula",
+      "interaccion": {
+        "tipo": "clasificacion",
+        "consigna": "Clasifica cada situación según el tipo de apoyo que sería más adecuado.",
+        "retroalimentacion": "La clasificación depende del nivel de consecuencia, de si la información cambia y de si existe una autoridad o profesional que debe responder. La IA puede apoyar la preparación, pero no reemplaza esas responsabilidades.",
+        "minimo_requerido": 6,
+        "items": [
+          {
+            "texto": "Ordenar ideas para una presentación",
+            "categoria": "IA puede ayudar",
+            "correcta": null
+          },
+          {
+            "texto": "Confirmar la fecha oficial de una postulación",
+            "categoria": "IA + verificación",
+            "correcta": null
+          },
+          {
+            "texto": "Interpretar un diagnóstico médico personal",
+            "categoria": "fuente/persona competente",
+            "correcta": null
+          },
+          {
+            "texto": "Comparar criterios para elegir un curso",
+            "categoria": "IA puede ayudar",
+            "correcta": null
+          },
+          {
+            "texto": "Conocer el texto vigente de una norma",
+            "categoria": "IA + verificación",
+            "correcta": null
+          },
+          {
+            "texto": "Actuar ante una emergencia",
+            "categoria": "fuente/persona competente",
+            "correcta": null
+          }
+        ]
+      },
+      "fuente": "Microcapsula_07_Límites_de_la_IA_en_la_toma_de_decisiones.txt"
+    },
+    {
+      "orden": 8,
+      "titulo": "Actividad de cierre: resolver un problema personal o familiar",
+      "paso_ruta": "INTEGRO",
+      "duracion_min": 10,
+      "proposito": "Integrar la ruta completa para resolver un problema cotidiano con apoyo de IA, obteniendo una evidencia breve de aplicación sin transformar el nivel en una evaluación formal.",
+      "pregunta_movilizadora": "¿Puedo aplicar la ruta completa a una situación real?",
+      "producto_evidencia": "Ficha breve de resolución de problema con problema identificado, pregunta formulada, información obtenida, verificación básica y decisión o acción posible.",
+      "resultados_observables": [
+        "Aplica los cinco pasos de la ruta a un problema cotidiano.",
+        "Formula una solicitud clara y selecciona un formato útil.",
+        "Identifica qué información debería verificar antes de actuar.",
+        "Define una acción o próximo paso manteniendo la decisión bajo responsabilidad personal."
+      ],
+      "guion_apertura": "Llegamos al último desafío. Hasta ahora vimos ejemplos preparados para aprender. Esta vez te toca a ti. Puedes trabajar con una situación real que quieras resolver o elegir uno de los casos que te proponemos. La idea no es conseguir una respuesta perfecta: la idea es aplicar el proceso completo, paso a paso, y revisar qué harías con la información obtenida.",
+      "guion_cierre": "Llegaste al final, pero lo importante no es recordar cada pantalla. Es recordar una forma de usar la inteligencia artificial de manera útil y responsable. Primero define qué necesitas. Después pregunta con claridad. Organiza la información para entenderla. Verifica aquello que importa y, finalmente, decide tú. La IA puede ayudarte a encontrar caminos y comparar opciones. La decisión sigue siendo tuya.",
+      "tipo": "actividad_cierre",
+      "interaccion": {
+        "tipo": "eleccion",
+        "consigna": "Elige cómo quieres realizar la actividad final.",
+        "retroalimentacion": "Ambas opciones permiten demostrar la misma ruta. Elegir un caso preparado es completamente válido y evita compartir información personal.",
+        "minimo_requerido": 1,
+        "items": [
+          {
+            "texto": "Trabajar con una situación propia.",
+            "categoria": null,
+            "correcta": null
+          },
+          {
+            "texto": "Elegir un caso preparado.",
+            "categoria": null,
+            "correcta": null
+          }
+        ]
+      },
+      "fuente": "Microcapsula_08_Actividad_de_cierre_Resolver_un_problema_personal_o_familiar.txt"
+    }
+  ],
+  "caracterizacion": {
+    "introduccion": "El presente cuestionario tiene como propósito realizar la caracterización inicial de las actividades de capacitación y conocer necesidades, motivaciones y expectativas en materia de empleabilidad. La información recopilada permitirá orientar la oferta formativa hacia competencias pertinentes, considerando los desafíos de la transformación digital. La información será utilizada exclusivamente para los fines señalados y mejorar las acciones de capacitación. No existen respuestas correctas ni incorrectas; se solicita responder de acuerdo con su situación actual.",
+    "preguntas": [
+      {
+        "numero": 1,
+        "seccion": "Antecedentes sociodemográficos",
+        "enunciado": "¿Cuál es su rango de edad?",
+        "opciones": [
+          "18–24 años",
+          "25–34 años",
+          "35–44 años",
+          "45–54 años",
+          "55 años o más"
+        ],
+        "codigo": "edad"
+      },
+      {
+        "numero": 2,
+        "seccion": "Antecedentes sociodemográficos",
+        "enunciado": "¿Con qué género se identifica?",
+        "opciones": [
+          "Mujer",
+          "Hombre",
+          "No binario/a u otra identidad",
+          "Prefiero no responder"
+        ],
+        "codigo": "genero"
+      },
+      {
+        "numero": 3,
+        "seccion": "Antecedentes sociodemográficos",
+        "enunciado": "¿En qué región del país reside actualmente?",
+        "opciones": [
+          "Arica y Parinacota",
+          "Tarapacá",
+          "Antofagasta",
+          "Atacama",
+          "Coquimbo",
+          "Valparaíso",
+          "Metropolitana",
+          "O’Higgins",
+          "Maule",
+          "Ñuble",
+          "Biobío",
+          "La Araucanía",
+          "Los Ríos",
+          "Los Lagos",
+          "Aysén",
+          "Magallanes y Antártica Chilena"
+        ],
+        "codigo": "region"
+      },
+      {
+        "numero": 4,
+        "seccion": "Antecedentes sociodemográficos",
+        "enunciado": "¿Cuál es el nivel educativo más alto que ha completado?",
+        "opciones": [
+          "Enseñanza media",
+          "Técnico de nivel superior",
+          "Profesional",
+          "Magíster",
+          "Doctorado",
+          "Otro"
+        ],
+        "codigo": "nivel_educativo"
+      },
+      {
+        "numero": 5,
+        "seccion": "Antecedentes sociodemográficos",
+        "enunciado": "¿Cuál es su principal área de formación?",
+        "opciones": [
+          "Ciencias naturales y exactas",
+          "Ingeniería y tecnología",
+          "Ciencias de la salud",
+          "Ciencias sociales",
+          "Humanidades y artes",
+          "Educación",
+          "Administración y negocios",
+          "Dueños (as) de hogar",
+          "Trabajos técnicos",
+          "Otra"
+        ],
+        "codigo": "area_formacion"
+      },
+      {
+        "numero": 6,
+        "seccion": "Situación de empleabilidad y trayectoria laboral",
+        "enunciado": "¿Cuál es su situación laboral principal actualmente?",
+        "opciones": [
+          "Empleado/a dependiente",
+          "Trabajador/a independiente",
+          "Emprendedor/a",
+          "Desempleado/a buscando empleo",
+          "Estudiante",
+          "Otra situación"
+        ],
+        "codigo": "situacion_laboral"
+      },
+      {
+        "numero": 7,
+        "seccion": "Situación de empleabilidad y trayectoria laboral",
+        "enunciado": "¿Actualmente trabaja en un área relacionada con la carrera o formación que estudió?",
+        "opciones": [
+          "Sí",
+          "No"
+        ],
+        "codigo": "trabaja_en_su_area"
+      },
+      {
+        "numero": 8,
+        "seccion": "Situación de empleabilidad y trayectoria laboral",
+        "enunciado": "¿Cuántos años de experiencia laboral tiene?",
+        "opciones": [
+          "Menos de 1 año",
+          "1 a 10 años",
+          "11 a 20 años",
+          "21 años o más",
+          "Jubilado/a",
+          "No cuento con experiencia laboral"
+        ],
+        "codigo": "anios_experiencia"
+      },
+      {
+        "numero": 9,
+        "seccion": "Situación de empleabilidad y trayectoria laboral",
+        "enunciado": "¿Cuál es actualmente la principal dificultad que enfrenta para mejorar su empleabilidad?",
+        "opciones": [
+          "Falta de experiencia laboral",
+          "Falta de competencias específicas",
+          "Falta de certificaciones o especialización",
+          "Escasez de oportunidades laborales",
+          "Falta de redes profesionales",
+          "Responsabilidades familiares o de cuidado",
+          "Otra",
+          "No identifico dificultades relevantes"
+        ],
+        "codigo": "dificultad_empleabilidad"
+      },
+      {
+        "numero": 10,
+        "seccion": "Situación de empleabilidad y trayectoria laboral",
+        "enunciado": "¿Actualmente busca cambiar de área laboral o reconvertirse profesionalmente?",
+        "opciones": [
+          "Sí",
+          "No"
+        ],
+        "codigo": "busca_reconversion"
+      },
+      {
+        "numero": 11,
+        "seccion": "Necesidades e intereses de capacitación",
+        "enunciado": "¿Qué espera lograr principalmente al finalizar la capacitación?",
+        "opciones": [
+          "Encontrar empleo",
+          "Cambiar de empleo",
+          "Acceder a mejores oportunidades laborales",
+          "Mejorar mis ingresos",
+          "Aplicar nuevas competencias en mi trabajo",
+          "Desarrollar un emprendimiento",
+          "Continuar mi formación",
+          "Otra"
+        ],
+        "codigo": "expectativa"
+      }
+    ]
+  }
+}
