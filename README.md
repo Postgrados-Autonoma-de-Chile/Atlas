@@ -1,8 +1,10 @@
 # ATLAS — Tutor educativo de IA por WhatsApp
 
-Proyecto de la **Universidad Autónoma de Chile**. Un tutor conversacional que acompaña a estudiantes de cursos de formación por WhatsApp: entrega las clases en microcápsulas, resuelve dudas con RAG sobre el material oficial del curso, evalúa para enseñar, recuerda el progreso, retoma a quien abandona y gestiona la certificación.
+Proyecto de la **Universidad Autónoma de Chile**. Un tutor conversacional que acompaña por WhatsApp a quienes cursan el **Nivel Inicial: Alfabetización ciudadana en Inteligencia Artificial**: entrega el cuestionario de caracterización, conduce las 8 microcápsulas y su práctica, resuelve dudas con RAG sobre el material oficial, recuerda el progreso, retoma a quien abandona y gestiona la certificación.
 
-**Estado: Fases 1 a 14 implementadas**, más la convocatoria de cohortes. 130 tests en verde, typecheck limpio. El código está listo; lo que falta para el piloto es operacional (número de WhatsApp, credenciales, despliegue) y está detallado en [§14](#14-lo-que-falta-para-el-piloto).
+El currículo es **dato, no código**: vive en [`curriculo/nivel1.json`](curriculo/nivel1.json) y se carga a la base con un script idempotente. La trazabilidad requisito → fuente → cambio → archivo está en [`docs/CURRICULO.md`](docs/CURRICULO.md).
+
+**Estado: Fases 1 a 14 implementadas**, más la convocatoria de cohortes y la alineación curricular. 234 tests en verde, typecheck limpio. El código está listo; lo que falta para el piloto es operacional (número de WhatsApp real, contrato del BSP, despliegue) y está detallado en [§14](#14-lo-que-falta-para-el-piloto).
 
 > Este repositorio nació como un chatbot comercial omnicanal sobre Bitrix24. En la Fase 1 se eliminó toda la lógica de ventas y se conservó el núcleo conversacional, que estaba probado en producción. La baja operacional del sistema anterior es un proceso aparte: [`docs/DECOMISO-VENTAS.md`](docs/DECOMISO-VENTAS.md).
 
@@ -82,11 +84,14 @@ src/
 ├── messaging/
 │   ├── types.ts              # interfaz MessagingProvider + tipos normalizados
 │   ├── metaCloud.ts          # implementación Cloud API
+│   ├── chattigo.ts           # implementación BSP Chattigo (JWT, HSM, estados)
 │   ├── colaTurnos.ts         # publish/decode Pub/Sub con orderingKey por estudiante
 │   └── index.ts              # factory del proveedor
 ├── flows/
 │   ├── registro.ts           # captura de identidad conversacional (determinista)
-│   ├── evaluacion.ts         # interceptor de respuestas de quiz (determinista)
+│   ├── caracterizacion.ts    # cuestionario oficial de 11 preguntas (primer paso, obligatorio)
+│   ├── evaluacion.ts         # momento "Lo intento" de cada microcápsula (determinista)
+│   ├── fichaCierre.ts        # producto de cierre: los 5 pasos de la ruta sobre un caso real
 │   └── certificacion.ts      # RUT, código por correo y emisión (determinista)
 ├── rag/
 │   ├── chunker.ts            # troceado del material del curso
@@ -102,8 +107,10 @@ src/
 │   ├── db.ts                 # pool de Postgres, retención de auditoría
 │   ├── kv.ts                 # Redis con degradación a memoria en dev
 │   ├── personas.ts           # identidad y consentimiento
-│   ├── cursos.ts             # cursos, inscripción, progreso
-│   ├── evaluaciones.ts       # quizzes, intentos, respuestas
+│   ├── cursos.ts             # cursos, inscripción, progreso, campos curriculares
+│   ├── caracterizacion.ts    # preguntas, opciones y respuestas del cuestionario
+│   ├── evaluaciones.ts       # interacciones, intentos, respuestas
+│   ├── fichaCierre.ts        # ficha de resolución de problema y notas del estudiante
 │   ├── recordatorios.ts      # cola de recordatorios con estados
 │   ├── certificados.ts       # emisión y folios
 │   ├── invitaciones.ts       # cola de convocatoria
@@ -118,13 +125,15 @@ src/
 ├── util/                     # semáforo, locks in-process y distribuido, comparación timing-safe
 └── eval/juez.ts              # juez LLM del harness pedagógico
 
-migrations/                   # 10 migraciones node-pg-migrate (.cjs)
+curriculo/nivel1.json         # el plan curricular oficial como dato versionado
+scripts/cargar-curriculo.mjs  # carga idempotente del currículo a la base
+migrations/                   # 12 migraciones node-pg-migrate (.cjs)
 infra/                        # Terraform del piloto GCP
 perf/                         # carga con k6 (firma HMAC real) + verificador de invariantes
 eval/golden-set.json          # casos de referencia del harness pedagógico
 contenido/                    # material del curso del piloto
-docs/                         # DEPLOY · SEGURIDAD · OBSERVABILIDAD · DECOMISO-VENTAS · specs/
-test/                         # 25 archivos, 130 tests
+docs/                         # CURRICULO · DEPLOY · SEGURIDAD · OBSERVABILIDAD · CHATTIGO · specs/
+test/                         # 36 archivos, 234 tests
 ```
 
 ---
@@ -192,15 +201,23 @@ La regla dura del RAG: si nada supera `RAG_MIN_SCORE`, devuelve `encontrado:fals
 
 ---
 
-## 7. Los tres flujos deterministas
+## 7. Los cinco flujos deterministas
 
 ### Registro ([`flows/registro.ts`](src/flows/registro.ts))
 
 Según [`docs/specs/captura-identidad-estudiante.md`](docs/specs/). Consentimiento primero por botones, un dato por mensaje, confirmación del correo, máximo 2 reintentos por campo — al tercero se pausa y el mensaje pasa al tutor. La persona se crea recién con la captura mínima completa, de forma atómica. **El RUT no se pide acá**, solo al certificar.
 
-### Evaluación ([`flows/evaluacion.ts`](src/flows/evaluacion.ts))
+### Caracterización ([`flows/caracterizacion.ts`](src/flows/caracterizacion.ts))
 
-Intercepta las respuestas de quiz antes del motor. El parsing de la alternativa es exacto (id de botón o texto A-D / V-F) y el registro es transaccional. La retroalimentación nace de la explicación docente guardada en la pregunta: **corregir → decir la correcta → explicar el porqué → invitar a seguir**. Es evaluación formativa: enseña, no filtra.
+El cuestionario oficial de 11 preguntas, que el plan define como el paso inicial. Se conduce solo, con botones cuando caben, lista cuando son hasta 10 y texto numerado cuando son más (la pregunta de región tiene 16 opciones). El requisito se hace cumplir en las **herramientas**, no en el prompt: `inscribirme_al_curso` y `continuar_curso` devuelven `caracterizacion_pendiente` hasta que esté completo, así que insistir no sirve.
+
+### "Lo intento" ([`flows/evaluacion.ts`](src/flows/evaluacion.ts))
+
+La práctica que el plan exige en cada microcápsula, en las cuatro formas que los documentos definen: selección única, clasificación, selección múltiple con mínimo y elección entre opciones ambas válidas. Ante un error el ítem vuelve **una vez** para revisarlo, sin penalización y sin revelar la respuesta — el material pide «Permitir "Revisar de nuevo" sin penalización». El criterio del documento se entrega completo al cerrar, una sola vez. **No hay nota**: la certificación es por finalización.
+
+### Ficha de cierre ([`flows/fichaCierre.ts`](src/flows/fichaCierre.ts))
+
+El producto de cierre del nivel. Sus cinco campos son los cinco pasos de la ruta, así que llenarla es recorrer DEFINO → PREGUNTO → ORGANIZO → VERIFICO → DECIDO sobre un caso real. Completarla completa la microcápsula 8: el plan pide evidencia de aplicación, no que el contenido se haya enviado.
 
 ### Certificación ([`flows/certificacion.ts`](src/flows/certificacion.ts))
 
@@ -338,17 +355,20 @@ Seguridad: PII cifrada en reposo con AES-256-GCM, redacción de PII en logs y au
 
 **Bloqueantes operacionales**
 
-1. **Número de WhatsApp dedicado.** Debe ser uno que nunca haya estado registrado en WhatsApp: al conectarlo a la plataforma queda consumido y no puede volver a usarse en la app. Requiere recibir un SMS o llamada una vez, y aprobación del nombre visible por Meta.
-2. **Credenciales**: `WA_CLOUD_TOKEN` (token de usuario del sistema, permanente), `WA_CLOUD_PHONE_NUMBER_ID`, `META_APP_SECRET`, `META_VERIFY_TOKEN`, `GEMINI_API_KEY`, SMTP.
-3. **Plantilla utility de recordatorio aprobada** por Meta (`WA_TEMPLATE_RECORDATORIO`).
-4. **Transcripciones de las microcápsulas** cargadas como `content_item`: sin ellas el RAG no tiene material que buscar.
+1. **Número de WhatsApp dedicado.** Lo que hay conectado es un **número de prueba de Meta** (`+1 555…`), que solo puede escribirle a un puñado de destinatarios preinscritos: sirve para desarrollar, no para una cohorte. El definitivo debe ser uno que nunca haya estado registrado en WhatsApp —al conectarlo queda consumido—, recibir un SMS o llamada una vez, y tener el nombre visible aprobado por Meta.
+2. **Escalón de mensajería de Meta.** Un número nuevo parte en 250 destinatarios por 24 h y sube a 1.000, 10.000 y 100.000 según uso y calidad. No se puede pedir: se construye a lo largo de semanas, así que la primera oleada tiene que planificarse contra ese techo.
+3. **Credenciales**: `WA_CLOUD_TOKEN` (token de usuario del sistema, permanente), `WA_CLOUD_PHONE_NUMBER_ID`, `META_APP_SECRET`, `META_VERIFY_TOKEN`, `GEMINI_API_KEY`, SMTP.
+4. **Plantilla utility de recordatorio aprobada** por Meta (`WA_TEMPLATE_RECORDATORIO`).
+5. **Transcripciones de las microcápsulas** cargadas como `content_item`: hoy el RAG tiene 1.410 caracteres —descripciones, no el material— así que `buscar_contenido_curso` responde con menos de lo que el curso enseña.
 
 **Pendientes de código**
 
 
 | Pendiente | Detalle |
 |---|---|
-| **Adaptador BSP** | La costura está lista y la regla arquitectónica es explícita: nada fuera de `src/messaging/` importa Meta/Graph. Pero `WA_PROVIDER` solo acepta `meta` o vacío; agregar Chattigo o Atom es escribir otra implementación de `MessagingProvider` y extender ese enum |
+| **Adaptador BSP** | Chattigo está implementado ([`messaging/chattigo.ts`](src/messaging/chattigo.ts), 25 tests, [`docs/CHATTIGO.md`](docs/CHATTIGO.md)) pero **nunca corrió contra la API real**: sin contrato firmado no hay credenciales con las que probarlo |
+| **Currículo en producción** | La migración 0012 y `scripts/cargar-curriculo.mjs` solo se han corrido contra la base local. En Cloud SQL viven 4 estudiantes y un certificado emitido: la carga archiva los cursos anteriores (no los borra) y hay que ejecutarla a mano |
+| **`maxScale = 1`** | Cloud Run está fijado en una instancia: unos 80 turnos concurrentes. Subirlo a 10 es un parámetro, pero conviene hacerlo con el número real ya conectado |
 | **QR imprimible** | El enlace `wa.me` ya se genera (`GET /jobs/convocatoria`); falta convertirlo en un PNG/SVG para afiches. Cualquier generador sirve mientras tanto |
 | **Fase 15** | Escalabilidad — plan en la auditoría §13 |
 | **Feriados** | Lista fija de cuatro fechas en `reminders/motor.ts`; conviene externalizarla |
