@@ -1,0 +1,25 @@
+# ATLAS — imagen de tareas de base de datos (migraciones y carga del currículo).
+#
+# El servicio corre como un bundle sin node_modules y sin migrations/, que es lo correcto para el
+# runtime: la aplicación NO migra al arrancar. Pero eso dejaba las migraciones de producción como un
+# paso manual desde un notebook con un túnel a Cloud SQL, lo que no escala y obliga a exponer la
+# base a una IP de casa.
+#
+# Esta imagen se ejecuta como Cloud Run Job DENTRO del proyecto, hablando con Cloud SQL por el
+# conector (socket /cloudsql/...): sin IP pública autorizada, sin túnel y con la misma identidad y
+# el mismo secreto que usa el servicio.
+FROM node:22-slim
+ENV NODE_ENV=production
+WORKDIR /app
+
+# Las dependencias completas: node-pg-migrate es devDependency y acá SÍ se necesita.
+COPY package.json package-lock.json ./
+RUN npm ci --include=dev --no-fund --no-audit
+
+COPY migrations ./migrations
+COPY curriculo ./curriculo
+COPY scripts/cargar-curriculo.mjs ./scripts/cargar-curriculo.mjs
+
+USER node
+# Por omisión, migrar. El job del currículo sobreescribe el comando.
+CMD ["npx", "node-pg-migrate", "-m", "migrations", "up"]

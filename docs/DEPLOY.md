@@ -61,6 +61,43 @@ DATABASE_URL=... GEMINI_API_KEY=... npx tsx scripts/ingerir-contenido.ts descrip
     disco, así que un reinicio de la VM no borra el estado, pero la pérdida de la zona sí.
   - Para escalar a Memorystore: cambiar el secreto `atlas-redis-url` por su endpoint y redesplegar.
 
+## 2b. Migraciones y currículo en producción (Cloud Run Jobs)
+
+La aplicación **no migra al arrancar** y su imagen no lleva `migrations/`: es un bundle sin
+`node_modules`. Eso dejaba la migración de producción como un paso manual desde un notebook con un
+túnel a Cloud SQL, que obliga a autorizar una IP doméstica en la instancia. Para no depender de eso
+hay una imagen aparte ([`Dockerfile.tareas`](../Dockerfile.tareas)) que corre como job **dentro** del
+proyecto, hablando con Cloud SQL por el conector: sin IP pública autorizada y con el mismo secreto
+que usa el servicio.
+
+```bash
+IMG=us-east1-docker.pkg.dev/postgrados-ua/atlas/atlas-tareas
+SA=768793961060-compute@developer.gserviceaccount.com
+SQL=postgrados-ua:us-east1:atlas-demo
+
+gcloud builds submit --config cloudbuild.tareas.yaml --substitutions=_TAG=v1
+
+# Job 1 — migraciones (CMD por omisión de la imagen)
+gcloud run jobs create atlas-migrar --region us-east1 --image $IMG:v1 \
+  --service-account $SA --set-cloudsql-instances $SQL \
+  --set-secrets DATABASE_URL=atlas-database-url:latest --max-retries 0 --task-timeout 10m
+gcloud run jobs execute atlas-migrar --region us-east1 --wait
+
+# Job 2 — carga del currículo (idempotente; --dry-run simula y hace rollback)
+gcloud run jobs create atlas-curriculo --region us-east1 --image $IMG:v1 \
+  --service-account $SA --set-cloudsql-instances $SQL \
+  --set-secrets DATABASE_URL=atlas-database-url:latest --max-retries 0 --task-timeout 10m \
+  --command node --args="scripts/cargar-curriculo.mjs,--archivar-otros"
+gcloud run jobs execute atlas-curriculo --region us-east1 --wait
+```
+
+**Orden importante:** migrar → desplegar el servicio → cargar el currículo. El código nuevo lee
+columnas que la migración crea, así que desplegarlo antes deja el curso caído; y cargar el currículo
+antes del deploy hace que el código viejo sirva contenidos que no sabe interpretar.
+
+Los dos jobs son re-ejecutables. Para actualizar el material curricular basta reconstruir la imagen
+y ejecutar el job 2 otra vez: reconcilia por códigos estables, así que nadie pierde su avance.
+
 ## 3. Validación post-deploy
 
 ```bash
