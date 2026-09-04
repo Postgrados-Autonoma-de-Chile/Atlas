@@ -50,7 +50,21 @@ Dictaba **otro curso**. No le faltaban piezas: los contenidos no coincidían.
 
 ---
 
-## 3. Decisiones que conviene auditar
+## 3. Los siete casos del encargo
+
+| Caso | Qué debe pasar | Dónde se prueba |
+|---|---|---|
+| 1 · usuario nuevo | Comienza con caracterización | [`caracterizacion.test.ts`](../test/caracterizacion.test.ts) |
+| 2 · completa la caracterización | Inicia la ruta correcta | [`caracterizacion.test.ts`](../test/caracterizacion.test.ts) |
+| 3 · abandona | Continúa desde su último estado | [`caracterizacion.test.ts`](../test/caracterizacion.test.ts), [`fichaCierre.test.ts`](../test/fichaCierre.test.ts) |
+| 4 · responde incorrectamente | Se ejecuta el refuerzo definido | [`interacciones.test.ts`](../test/interacciones.test.ts) |
+| 5 · demuestra dominio | Avanza según las reglas | [`fichaCierre.test.ts`](../test/fichaCierre.test.ts), [`interacciones.test.ts`](../test/interacciones.test.ts) |
+| 6 · intenta saltarse contenidos | Se respeta la lógica curricular | [`gateCaracterizacion.test.ts`](../test/gateCaracterizacion.test.ts), [`fichaCierre.test.ts`](../test/fichaCierre.test.ts) |
+| 7 · termina una microcápsula | Pasa correctamente a la siguiente | [`avanceMicrocapsula.test.ts`](../test/avanceMicrocapsula.test.ts) |
+
+---
+
+## 4. Decisiones que conviene auditar
 
 **Los cursos anteriores se archivan, no se borran.** Había 4 personas inscritas y un certificado
 emitido. `cursoActivo()` pasa a devolver el currículo oficial y nadie pierde su historial.
@@ -82,7 +96,7 @@ se lo salte por complacer a quien insiste.
 
 ---
 
-## 4. Inconsistencia del material, normalizada
+## 5. Inconsistencia del material, normalizada
 
 La **microcápsula 7** escribe la misma categoría de dos maneras:
 
@@ -104,7 +118,7 @@ practicar la pauta del paso DEFINO.
 
 ---
 
-## 5. Adaptaciones al canal
+## 6. Adaptaciones al canal
 
 El plan está escrito para una plataforma web con video, arrastrar y soltar, e infografías
 interactivas. WhatsApp no tiene nada de eso. Lo que se conserva es la **función didáctica**:
@@ -125,7 +139,7 @@ pregunta simplemente no se podría hacer.
 
 ---
 
-## 6. Cómo cargar o actualizar el currículo
+## 7. Cómo cargar o actualizar el currículo
 
 ```bash
 # 1. Extraer el texto de los .docx (requiere Python)
@@ -143,7 +157,7 @@ duplica ni pierde avance, porque `lesson_progress` apunta a `lesson.id`, que se 
 
 ---
 
-## 7. Pendiente
+## 8. Pendiente
 
 **Las transcripciones de las microcápsulas no están cargadas como contenido RAG.** El plan describe
 las pantallas y las demostraciones, pero el texto que el estudiante leería en cada una está en los
