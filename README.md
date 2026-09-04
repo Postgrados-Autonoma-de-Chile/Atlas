@@ -327,7 +327,18 @@ Otros scripts:
 
 ## 11. Tests
 
-**130 tests en 25 archivos**, todos en verde. Cubren, entre otros: el bucle del agente con el cliente mockeado, el pipeline de WhatsApp, la verificación de firma, el push de Pub/Sub, los tres flujos deterministas, la validación de identidad, el troceado del RAG, el juez del harness, los recordatorios, la convocatoria, el PDF del certificado, y dos suites dedicadas a que los guards y las verificaciones sean **fail-closed** (`failclosed.test.ts`, `seguridad.test.ts`).
+**234 tests en 36 archivos**, todos en verde. Cubren, entre otros: el bucle del agente con el cliente mockeado, el pipeline de WhatsApp, la verificación de firma, el push de Pub/Sub, los cinco flujos deterministas, los siete casos curriculares del encargo, la validación de identidad, el troceado del RAG, el juez del harness, los recordatorios, la convocatoria, el adaptador Chattigo, el PDF del certificado, y dos suites dedicadas a que los guards y las verificaciones sean **fail-closed** (`failclosed.test.ts`, `seguridad.test.ts`).
+
+### Recorrer el curso a mano, sin WhatsApp
+
+`npm run sim` levanta el **mismo pipeline del webhook** con un proveedor de mensajería de consola: imprime lo que el bot enviaría y los botones se eligen escribiendo su número. Sirve para caminar el flujo completo —caracterización, las 8 microcápsulas con su "Lo intento", la ficha de cierre, la certificación— sin número real y sin costo por mensaje.
+
+```bash
+DATABASE_URL=postgres://atlas:atlaslocal@localhost:5433/atlas npm run sim
+# comandos dentro del simulador: /estado  /nuevo  /reset  /salir
+```
+
+Con la entrada por tubería o archivo (`npm run sim < guion.txt`) el recorrido se vuelve repetible; las líneas que empiezan con `#` son comentarios. Dos guardas: el proveedor de consola se **inyecta**, así que el script no puede enviar un WhatsApp real, y se niega a correr contra una base que no sea local salvo `--acepto-base-remota` — en Cloud SQL hay estudiantes de verdad. Los turnos del tutor sí llaman a la API de Anthropic, así que necesitan `ANTHROPIC_API_KEY` válida; los flujos deterministas corren sin ella.
 
 ---
 
