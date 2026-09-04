@@ -16,6 +16,7 @@ import { messagingProvider, normalizarEntrante } from '../messaging';
 import { pubsubHabilitado, publicarTurno } from '../messaging/colaTurnos';
 import type { InboundMessage, InboundStatus, MessagingProvider } from '../messaging';
 import { manejarRegistro, CONSENT_VERSION } from '../flows/registro';
+import { manejarCaracterizacion } from '../flows/caracterizacion';
 import { manejarEvaluacion, iniciarQuizPendiente } from '../flows/evaluacion';
 import { manejarCertificacion } from '../flows/certificacion';
 import { contextoAcademico } from '../store/cursos';
@@ -249,6 +250,12 @@ export async function procesarMensajeEntrante(msg: InboundMessage, provider: Mes
     if (persistido) void audit({ type: 'optin_recordatorios', dialogId: msg.from });
     return;
   }
+
+  // Caracterización: PRIMER paso de la experiencia según el plan curricular oficial. Interceptor
+  // determinista de 11 preguntas cerradas; la ruta curricular queda bloqueada hasta completarlo
+  // (el bloqueo vive en las tools, no en el prompt).
+  const caracterizacion = await manejarCaracterizacion(msg, persona, provider);
+  if (caracterizacion.handled) return;
 
   // Evaluaciones formativas (F7): interceptor determinista de respuestas de quiz (botones/listas o
   // texto A-D/V-F) ANTES del motor — el parsing y el registro académico jamás se delegan al LLM.
