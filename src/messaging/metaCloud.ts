@@ -79,6 +79,20 @@ export function payloadDocumento(to: string, urlOMediaId: string, filename: stri
   };
 }
 
+/**
+ * Acuse de lectura (check azul) + indicador de "escribiendo…", que la Cloud API entrega en una sola
+ * llamada. El indicador se retira cuando enviamos la respuesta o a los 25 s, lo que ocurra primero,
+ * así que cubre justo la espera del modelo: sin él el estudiante ve silencio y cree que el bot murió.
+ */
+export function payloadLeido(waMessageId: string) {
+  return {
+    messaging_product: 'whatsapp',
+    status: 'read',
+    message_id: waMessageId,
+    typing_indicator: { type: 'text' },
+  };
+}
+
 // ── Normalización del webhook (pura) ──────────────────────────────────────────
 
 /** Convierte el body crudo del webhook de Cloud API (entry[].changes[].value) al formato interno. */
@@ -188,7 +202,7 @@ export class MetaCloudProvider implements MessagingProvider {
   }
 
   marcarLeido(waMessageId: string) {
-    return this.post({ messaging_product: 'whatsapp', status: 'read', message_id: waMessageId });
+    return this.post(payloadLeido(waMessageId));
   }
 
   /** Descarga en dos pasos de la Media API: GET /{media-id} → URL efímera → GET con Bearer. */

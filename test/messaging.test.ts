@@ -8,7 +8,7 @@ process.env.DATABASE_URL = '';
 process.env.NODE_ENV = 'test';
 process.env.WA_PROVIDER = ''; // desactivado → los envíos deben omitirse sin tocar la red
 
-const { payloadTexto, payloadPlantilla, payloadBotones, payloadLista, payloadDocumento, normalizarEntrante, normalizarE164, MetaCloudProvider } =
+const { payloadTexto, payloadPlantilla, payloadBotones, payloadLista, payloadDocumento, payloadLeido, normalizarEntrante, normalizarE164, MetaCloudProvider } =
   await import('../src/messaging/metaCloud');
 
 test('normalizarE164: wa_id de Meta (sin +) → E.164 con +', () => {
@@ -56,6 +56,23 @@ test('payloadLista: filas con descripción opcional', () => {
   const rows = p.interactive.action.sections[0].rows;
   assert.deepEqual(rows[0], { id: 'a', title: 'A', description: 'Primera' });
   assert.deepEqual(rows[1], { id: 'b', title: 'B' });
+});
+
+test('payloadLeido: acuse de lectura CON indicador de escritura, en una sola llamada', () => {
+  const p = payloadLeido('wamid.ABC123');
+  assert.equal(p.messaging_product, 'whatsapp');
+  assert.equal(p.status, 'read');
+  assert.equal(p.message_id, 'wamid.ABC123');
+  // El único valor que documenta Meta. Sin este campo el estudiante ve silencio mientras
+  // el modelo piensa, que es justo lo que hacía creer que el bot estaba caído.
+  assert.deepEqual(p.typing_indicator, { type: 'text' });
+});
+
+test('payloadLeido: no lleva "to" ni "type" — no es un envío, es un acuse', () => {
+  const p = payloadLeido('wamid.XYZ') as Record<string, unknown>;
+  assert.equal('to' in p, false);
+  assert.equal('type' in p, false);
+  assert.doesNotThrow(() => JSON.parse(JSON.stringify(p)));
 });
 
 test('payloadDocumento: distingue URL pública de media id', () => {
