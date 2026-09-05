@@ -38,8 +38,9 @@ export type ToolExecutor = (name: string, input: any) => Promise<any>;
 /**
  * Marca el prefijo ESTABLE del prompt (system + esquemas de tools) como cacheable con
  * `cache_control: ephemeral`. El orden de render de Anthropic es tools → system → messages, así que
- * un único breakpoint en el system cachea también las tools: es el mayor ahorro de tokens de entrada
- * del motor (60-90% del input repetido) y, además, las lecturas de caché no consumen rate limit.
+ * un breakpoint en el system cachea también las tools, y las lecturas de caché no consumen rate
+ * limit. Este cubre solo el PREFIJO ESTABLE; el historial lo cubre el breakpoint automático de
+ * `runConversation`, porque cambia en cada turno y necesita una marca que se mueva con él.
  */
 function cachedSystem(text: string) {
   return [{ type: 'text' as const, text, cache_control: { type: 'ephemeral' as const } }];
@@ -74,6 +75,13 @@ export async function runConversation(
     const resp = await anthropic.messages.create({
       model: profile.model,
       max_tokens: profile.maxResponseTokens,
+      // Segundo breakpoint, AUTOMÁTICO: Anthropic lo pone en el último bloque cacheable y lo va
+      // moviendo conforme crece la conversación, de modo que el HISTORIAL también se cachea. Sin
+      // él, el prefijo estable se leía a 0,1x pero los mensajes se reenviaban a precio completo en
+      // CADA llamada — medido en el piloto: el 47% de la factura. Importa doble en este bucle,
+      // porque un turno con tool_use hace 2 llamadas y la segunda reenvía todo el contexto.
+      // Ocupa 1 de los 4 breakpoints disponibles (con el del system van 2).
+      cache_control: { type: 'ephemeral' as const },
       system: cachedSystem(system),
       messages,
       tools: allowedTools as any,

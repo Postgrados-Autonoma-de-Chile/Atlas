@@ -28,6 +28,44 @@ const ctx = () => ({ conversationId: '', profile: TUTOR_WHATSAPP_PROFILE }) as a
 const textResp = (text: string) => ({ content: [{ type: 'text', text }], usage: { input_tokens: 5, output_tokens: 7 } });
 const toolResp = (id: string, name: string, input: any) => ({ content: [{ type: 'tool_use', id, name, input }], usage: {} });
 
+test('caché: dos breakpoints — el prefijo estable Y el historial', async () => {
+  // El prefijo estable (system + tools) se marca explícitamente; el historial lo cubre el
+  // breakpoint automático de nivel superior. Sin el segundo, los mensajes se reenvían a precio
+  // completo en cada llamada: era el 47% de la factura del piloto.
+  let visto: any = null;
+  impl = async (args: any) => (visto = args, textResp('ok'));
+  await runAgentTurn({ ...ctx(), conversationId: 'al-cache' }, 'hola');
+
+  assert.deepEqual(visto.cache_control, { type: 'ephemeral' }, 'breakpoint automático sobre los mensajes');
+  assert.deepEqual(
+    visto.system[0].cache_control, { type: 'ephemeral' },
+    'el prefijo estable conserva su marca explícita',
+  );
+  // Ambos con el TTL por defecto: una marca explícita en el ÚLTIMO bloque con TTL distinto del
+  // de nivel superior es un 400 documentado. Aquí la explícita va en system, no en el último.
+  assert.equal('ttl' in visto.cache_control, false);
+  assert.equal('ttl' in visto.system[0].cache_control, false);
+});
+
+test('caché: el breakpoint sigue puesto en la segunda llamada del turno (la del tool_result)', async () => {
+  // Es donde más rinde: la segunda llamada reenvía todo el contexto más el resultado de la tool.
+  // `messages` se muta en sitio y viaja por referencia, así que hay que quedarse con el largo
+  // EN EL MOMENTO de cada llamada; guardar el objeto daría dos vistas del mismo array final.
+  const llamadas: { cacheControl: any; nMensajes: number }[] = [];
+  let paso = 0;
+  impl = async (args: any) => {
+    llamadas.push({ cacheControl: args.cache_control, nMensajes: args.messages.length });
+    return paso++ === 0 ? toolResp('t1', 'consultar_progreso', {}) : textResp('listo');
+  };
+  await runAgentTurn({ ...ctx(), conversationId: 'al-cache-2' }, 'como voy');
+
+  assert.equal(llamadas.length, 2, 'un tool_use produce dos llamadas');
+  for (const [i, c] of llamadas.entries()) {
+    assert.deepEqual(c.cacheControl, { type: 'ephemeral' }, `llamada ${i + 1} sin breakpoint`);
+  }
+  assert.ok(llamadas[1].nMensajes > llamadas[0].nMensajes, 'la segunda reenvía más historial');
+});
+
 test('runAgentTurn: respuesta de solo texto se devuelve y se guarda en memoria', async () => {
   impl = async () => textResp('¡Hola! Soy ATLAS, tu tutor. ¿En qué te ayudo?');
   const c = { ...ctx(), conversationId: 'al-text' };
