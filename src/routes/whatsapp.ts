@@ -214,7 +214,8 @@ export async function procesarMensajeEntrante(msg: InboundMessage, provider: Mes
   // QR o de la plantilla — así no se le paga una invitación a quien ya llegó. Best-effort.
   void marcarRespondio(msg.from).catch(() => {});
 
-  // Marcar como leído (check azul) — mejora la experiencia; no crítico.
+  // Check azul + "escribiendo…" en una sola llamada. Cubre la espera del modelo (3-19 s según haya
+  // arranque en frío). Si el mensaje resulta no procesable y no respondemos, Meta lo retira a los 25 s.
   void provider.marcarLeido(msg.waMessageId).catch(() => {});
 
   // Registro de identidad (F3): asistente determinista para usuarios sin Persona. Si consume el
