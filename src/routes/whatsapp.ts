@@ -16,6 +16,8 @@ import { messagingProvider, normalizarEntrante } from '../messaging';
 import { pubsubHabilitado, publicarTurno } from '../messaging/colaTurnos';
 import type { InboundMessage, InboundStatus, MessagingProvider } from '../messaging';
 import { manejarRegistro, CONSENT_VERSION } from '../flows/registro';
+import { manejarCaracterizacion } from '../flows/caracterizacion';
+import { manejarFichaCierre } from '../flows/fichaCierre';
 import { manejarEvaluacion, iniciarQuizPendiente } from '../flows/evaluacion';
 import { manejarCertificacion } from '../flows/certificacion';
 import { contextoAcademico } from '../store/cursos';
@@ -250,10 +252,22 @@ export async function procesarMensajeEntrante(msg: InboundMessage, provider: Mes
     return;
   }
 
+  // Caracterización: PRIMER paso de la experiencia según el plan curricular oficial. Interceptor
+  // determinista de 11 preguntas cerradas; la ruta curricular queda bloqueada hasta completarlo
+  // (el bloqueo vive en las tools, no en el prompt).
+  const caracterizacion = await manejarCaracterizacion(msg, persona, provider);
+  if (caracterizacion.handled) return;
+
   // Evaluaciones formativas (F7): interceptor determinista de respuestas de quiz (botones/listas o
   // texto A-D/V-F) ANTES del motor — el parsing y el registro académico jamás se delegan al LLM.
   const evaluacion = await manejarEvaluacion(msg, persona, provider);
   if (evaluacion.handled) return;
+
+  // Producto de cierre: la ficha de resolución de problema, evidencia de aplicación de la ruta
+  // completa que el plan curricular define como cierre del nivel. Va ANTES de la certificación:
+  // la ficha es el requisito de la microcápsula 8, y sin ella el curso no está completo.
+  const ficha = await manejarFichaCierre(msg, persona, provider);
+  if (ficha.handled) return;
 
   // Certificación (F8): interceptor determinista — RUT, verificación de correo y emisión jamás
   // pasan por el LLM.

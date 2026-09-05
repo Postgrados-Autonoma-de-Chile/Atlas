@@ -2,6 +2,7 @@ import type { AgentContext } from '../core/channel';
 import { buscarPersonaPorWaId } from '../store/personas';
 import { inscribir, estadoAcademico, entregarLeccionActual, completarLeccionActual, cursoActivo } from '../store/cursos';
 import { quizDeLeccion, quizzesPendientes } from '../store/evaluaciones';
+import { estaCompleta, respondidas, totalPreguntas } from '../store/caracterizacion';
 import { marcarQuizPendiente } from '../flows/evaluacion';
 import { buscarContenidoCurso } from '../rag/retrieval';
 import { audit } from '../obs/audit';
@@ -27,6 +28,28 @@ const NO_REGISTRADO = { ok: false, error: 'no_registrado', mensaje: 'El estudian
  * Devuelve un objeto vacío cuando no hay ninguno, para no ensuciar el resultado de la herramienta
  * ni gastar tokens en un cero.
  */
+/**
+ * Verifica el requisito previo del plan curricular: la caracterización va PRIMERO.
+ *
+ * Devuelve null cuando está cumplido. Cuando no, devuelve el resultado que la herramienta debe
+ * entregar en su lugar. El bloqueo vive acá y no en el prompt a propósito: el modelo no debe poder
+ * decidir saltarse un requisito del currículo por complacer a quien insiste.
+ */
+async function faltaCaracterizacion(personId: string): Promise<Record<string, unknown> | null> {
+  if (await estaCompleta(personId)) return null;
+  const [hechas, total] = await Promise.all([respondidas(personId), totalPreguntas()]);
+  // Sin cuestionario cargado (base sin currículo) no se bloquea nada: sería dejar el bot inservible.
+  if (total === 0) return null;
+  return {
+    ok: false,
+    error: 'caracterizacion_pendiente',
+    faltan: total - hechas,
+    mensaje: `El plan curricular exige completar el cuestionario de caracterización antes de iniciar el curso. `
+      + `Le quedan ${total - hechas} de ${total} preguntas. Dile que escriba "cuestionario" para responderlas `
+      + `(son de alternativas y toma un par de minutos). NO entregues contenido del curso todavía.`,
+  };
+}
+
 async function practicaPendiente(personId: string): Promise<Record<string, unknown>> {
   const n = await quizzesPendientes(personId);
   if (n <= 0) return {};
@@ -58,6 +81,8 @@ export async function executeTool(name: string, _input: unknown, ctx?: AgentCont
 
       case 'inscribirme_al_curso': {
         if (!ctx?.personId) return NO_REGISTRADO;
+        const bloqueo = await faltaCaracterizacion(ctx.personId);
+        if (bloqueo) return bloqueo;
         const estado = await inscribir(ctx.personId);
         if (!estado) return { ok: false, error: 'bd_no_disponible' };
         if (!estado.inscrito) return { ok: false, error: 'sin_curso_activo' };
@@ -85,6 +110,8 @@ export async function executeTool(name: string, _input: unknown, ctx?: AgentCont
 
       case 'continuar_curso': {
         if (!ctx?.personId) return NO_REGISTRADO;
+        const bloqueo = await faltaCaracterizacion(ctx.personId);
+        if (bloqueo) return bloqueo;
         const entrega = await entregarLeccionActual(ctx.personId);
         if (!entrega) {
           // Ya completó el curso (o no está inscrito). Si le quedan quizzes por rendir, es lo único

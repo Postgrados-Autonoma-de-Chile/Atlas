@@ -14,6 +14,21 @@ export type Leccion = {
   duracionMin: number;
   /** Materiales asociados (video/documento) con URL si existen. */
   materiales: { tipo: string; titulo: string | null; url: string | null }[];
+
+  // ── Ficha de diseño de la microcápsula (plan curricular oficial) ──────────
+  /** Paso de la ruta DEFINO → PREGUNTO → ORGANIZO → VERIFICO → DECIDO que trabaja esta cápsula.
+   *  El plan exige que la ruta permanezca visible durante todo el recorrido. */
+  pasoRuta: string | null;
+  proposito: string | null;
+  /** Pregunta con que el documento abre la cápsula ("¿Tengo claro lo que necesito resolver?"). */
+  preguntaMovilizadora: string | null;
+  productoEvidencia: string | null;
+  resultadosObservables: string[];
+  /** Guion del Anfitrión. El plan le da presencia SOLO al inicio y al cierre de cada cápsula:
+   *  humaniza el recorrido sin asumir el rol de profesor. En WhatsApp no hay video, pero el texto
+   *  del guion se entrega igual — es contenido curricular, no una acotación de producción. */
+  guionApertura: string | null;
+  guionCierre: string | null;
 };
 
 export type EstadoAcademico = {
@@ -112,7 +127,9 @@ export async function entregarLeccionActual(personId: string): Promise<{ leccion
     if (!estado?.inscrito || !estado.enrollment || estado.enrollment.estado !== 'activa') return null;
 
     const r = await pool.query(
-      `SELECT l.id, l.orden, l.titulo, l.descripcion, l.tipo, l.duracion_min
+      `SELECT l.id, l.orden, l.titulo, l.descripcion, l.tipo, l.duracion_min,
+              l.paso_ruta, l.proposito, l.pregunta_movilizadora, l.producto_evidencia,
+              l.resultados_observables, l.guion_apertura, l.guion_cierre
        FROM lesson l JOIN module m ON m.id = l.module_id
        WHERE m.course_id = $1
          AND NOT EXISTS (SELECT 1 FROM lesson_progress lp
@@ -137,6 +154,13 @@ export async function entregarLeccionActual(personId: string): Promise<{ leccion
         id: l.id, orden: l.orden, titulo: l.titulo, descripcion: l.descripcion,
         tipo: l.tipo, duracionMin: l.duracion_min,
         materiales: mats.rows.map((m: any) => ({ tipo: m.tipo, titulo: m.titulo, url: m.url })),
+        pasoRuta: l.paso_ruta ?? null,
+        proposito: l.proposito ?? null,
+        preguntaMovilizadora: l.pregunta_movilizadora ?? null,
+        productoEvidencia: l.producto_evidencia ?? null,
+        resultadosObservables: Array.isArray(l.resultados_observables) ? l.resultados_observables : [],
+        guionApertura: l.guion_apertura ?? null,
+        guionCierre: l.guion_cierre ?? null,
       },
       posicion: `${l.orden} de ${estado.totalLecciones}`,
     };
