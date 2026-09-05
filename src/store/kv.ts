@@ -153,3 +153,28 @@ export async function once(key: string, ttlSec = 3600): Promise<boolean> {
     return true;
   }
 }
+
+/**
+ * Comprueba de VERDAD que Redis responde, con un tope de 2 s.
+ *
+ * `kvKind` no sirve para esto: se fija al CONSTRUIR el cliente, y `new Redis(...)` no lanza cuando
+ * la conexión falla — ioredis reintenta en segundo plano. Sin este PING, /health informaba
+ * `kv: "redis"` con Redis inalcanzable, que es el peor modo de falla posible en un healthcheck:
+ * mentir diciendo que todo está bien. Se detectó al conectar Redis en el despliegue del piloto.
+ *
+ * En modo memoria devuelve true: no hay dependencia externa que pueda estar caída.
+ */
+export async function kvVivo(): Promise<boolean> {
+  if (!redisClient) return true;
+  try {
+    // Un healthcheck jamás debe quedarse colgado: si Redis no contesta en 2 s, está caído para
+    // efectos prácticos (nuestras operaciones son de milisegundos).
+    const pong = await Promise.race([
+      redisClient.ping(),
+      new Promise<string>((resolve) => setTimeout(() => resolve('TIMEOUT'), 2000).unref()),
+    ]);
+    return pong === 'PONG';
+  } catch {
+    return false;
+  }
+}

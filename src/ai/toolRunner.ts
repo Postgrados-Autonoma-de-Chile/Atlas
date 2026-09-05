@@ -1,131 +1,175 @@
-import { consultarProgramas, detallePrograma } from '../core/catalogTool';
-import { buscarCondiciones } from '../core/condicionesComerciales';
 import type { AgentContext } from '../core/channel';
-import { actualizarDatosCliente, obtenerContextoLlamada } from '../crm/crmWrite';
-import { getDealAsesores } from '../crm/directory';
-import { generarBriefing } from './briefing';
-import { iniciarLlamadaSaliente } from '../voice/outbound';
-import { markHumanTakeover, getSession, saveSession } from '../session';
-import { callBitrix } from '../bitrix/client';
-import { once } from '../store/kv';
+import { buscarPersonaPorWaId } from '../store/personas';
+import { inscribir, estadoAcademico, entregarLeccionActual, completarLeccionActual, cursoActivo } from '../store/cursos';
+import { quizDeLeccion, quizzesPendientes } from '../store/evaluaciones';
+import { marcarQuizPendiente } from '../flows/evaluacion';
+import { buscarContenidoCurso } from '../rag/retrieval';
+import { audit } from '../obs/audit';
 import { log } from '../log';
 
-export async function executeTool(name: string, input: any, ctx: AgentContext): Promise<any> {
-  const catalog = ctx.profile.catalog;
+// Ejecutor de herramientas del canal de chat. Patrón heredado y conservado:
+//   - switch por nombre, con validación ANTES de cualquier efecto;
+//   - try/catch global que devuelve { ok:false, error } sin romper el bucle del agente.
+// Los datos académicos SIEMPRE salen de Postgres vía store/cursos — nunca de la memoria del modelo.
+
+/** Enmascara un email para mostrarlo en chat sin exponerlo completo (r***o@uautonoma.cl). */
+function enmascararEmail(email: string): string {
+  const [user, dominio] = email.split('@');
+  if (!dominio) return '***';
+  const visible = user.length <= 2 ? user[0] ?? '*' : `${user[0]}***${user[user.length - 1]}`;
+  return `${visible}@${dominio}`;
+}
+
+const NO_REGISTRADO = { ok: false, error: 'no_registrado', mensaje: 'El estudiante aún no está registrado: invítalo a registrarse escribiendo "quiero registrarme".' };
+
+/**
+ * Quizzes de práctica que le quedan sin rendir, con la instrucción de qué hacer con el dato.
+ * Devuelve un objeto vacío cuando no hay ninguno, para no ensuciar el resultado de la herramienta
+ * ni gastar tokens en un cero.
+ */
+async function practicaPendiente(personId: string): Promise<Record<string, unknown>> {
+  const n = await quizzesPendientes(personId);
+  if (n <= 0) return {};
+  return {
+    quizzesPendientes: n,
+    instruccionPractica:
+      `Le quedan ${n} mini-quiz${n > 1 ? 'zes' : ''} de práctica de microcápsulas que ya completó. ` +
+      'Ofréceselo en UNA frase al cierre de tu mensaje, diciéndole que escriba "quiz" para partir con uno. ' +
+      'No insistas si no responde y no lo repitas en cada mensaje.',
+  };
+}
+
+export async function executeTool(name: string, _input: unknown, ctx?: AgentContext): Promise<unknown> {
   try {
     switch (name) {
-      case 'consultar_programas':
-        return consultarProgramas(input, catalog.consultar);
-
-      case 'detalle_programa':
-        return detallePrograma(input, catalog.detalle);
-
-      case 'consultar_condiciones_comerciales':
-        return buscarCondiciones(input?.programa, input?.sede);
-
-      case 'registrar_interes_crm': {
-        const r = await actualizarDatosCliente(ctx.crmEntities, ctx.chatId, input ?? {}, ctx.auth);
-        if (!r.ok) return { ok: false, error: r.error };
-        log.info('tool registrar_interes_crm', { actualizado: r.actualizado });
-        return { ok: true, actualizado: r.actualizado };
-      }
-
-      case 'solicitar_llamada': {
-        const raw = String(input?.telefono ?? '').replace(/[\s()\-.]/g, '');
-        // Normaliza a E.164 chileno y valida (+569XXXXXXXX). Evita marcar a números arbitrarios/premium.
-        const telefono = raw.startsWith('+') ? raw : raw.startsWith('56') ? `+${raw}` : `+56${raw.replace(/^0+/, '')}`;
-        if (!/^\+569\d{8}$/.test(telefono)) {
-          return {
-            ok: false,
-            error: 'TELEFONO_INVALIDO',
-            mensaje: 'Número inválido; confirma un móvil chileno (+56 9 ...) u ofrece derivar a un asesor.',
-          };
-        }
-        // Rate-limit: máximo una llamada solicitada por diálogo/hora (evita abuso y coste).
-        if (!(await once(`call:${ctx.conversationId}`, 3600))) {
-          return {
-            ok: false,
-            error: 'LIMITE_LLAMADAS',
-            mensaje: 'Ya se solicitó una llamada hace poco; ofrece que un asesor lo contacte.',
-          };
-        }
-        // Guarda/actualiza el teléfono en el CRM antes de llamar (best-effort, no bloquea).
-        void actualizarDatosCliente(ctx.crmEntities, ctx.chatId, { telefono }, ctx.auth).catch(() => {});
-        // Nombre + programa de interés ya capturados por chat: la llamada abre YA con ese contexto.
-        const contexto = await obtenerContextoLlamada(ctx.crmEntities, ctx.auth).catch(() => ({}));
-        // Diálogo de origen: al terminar la llamada, el bot retoma esta MISMA conversación por WhatsApp.
-        const origen = ctx.botId ? { dialogId: ctx.conversationId, botId: ctx.botId } : undefined;
-        // Ancla la MISMA ficha del CRM (deal/contacto/lead) en la llamada, para que el agente de voz
-        // resuelva la misma entidad y lea la conversación previa → continuidad: NO re-pide los datos.
-        const idMeta: Record<string, number> = {};
-        if (ctx.crmEntities?.deal) idMeta.dealId = ctx.crmEntities.deal;
-        if (ctx.crmEntities?.contact) idMeta.contactId = ctx.crmEntities.contact;
-        if (ctx.crmEntities?.lead) idMeta.leadId = ctx.crmEntities.lead;
-        const r = await iniciarLlamadaSaliente(
-          telefono,
-          contexto,
-          origen,
-          Object.keys(idMeta).length ? { metadata: idMeta } : undefined,
-        );
-        if (!r.ok) {
-          log.warn('tool solicitar_llamada falló', { err: r.error });
-          return {
-            ok: false,
-            error: r.error,
-            mensaje: 'No se pudo iniciar la llamada ahora. Ofrece que un asesor lo contacte en su lugar.',
-          };
-        }
-        log.info('tool solicitar_llamada', { telefono, callId: r.callId });
+      case 'consultar_mis_datos': {
+        const persona = ctx?.conversationId ? await buscarPersonaPorWaId(ctx.conversationId) : null;
+        if (persona === undefined) return { ok: false, error: 'bd_no_disponible' };
+        if (!persona) return { ok: true, registrado: false };
         return {
           ok: true,
-          llamando: true,
-          mensaje: 'Llamada iniciada. Dile al cliente que recibirá la llamada en unos momentos.',
+          registrado: true,
+          nombre: persona.nombre,
+          apellido: persona.apellido,
+          email: persona.email ? enmascararEmail(persona.email) : null,
+          emailVerificado: persona.emailVerificado,
         };
       }
 
-      case 'escalar_a_humano': {
-        if (ctx.chatId) {
-          await callBitrix('imopenlines.bot.session.operator', { CHAT_ID: ctx.chatId }, ctx.auth);
-        }
-        await markHumanTakeover(ctx.conversationId); // tras escalar, el bot deja de responder en esa sesión
+      case 'inscribirme_al_curso': {
+        if (!ctx?.personId) return NO_REGISTRADO;
+        const estado = await inscribir(ctx.personId);
+        if (!estado) return { ok: false, error: 'bd_no_disponible' };
+        if (!estado.inscrito) return { ok: false, error: 'sin_curso_activo' };
+        void audit({ type: 'inscripcion', dialogId: ctx.conversationId, detail: { curso: estado.curso?.codigo } });
+        return { ok: true, curso: estado.curso?.nombre, totalMicrocapsulas: estado.totalLecciones, primera: estado.proxima };
+      }
 
-        // Genera (una vez) un resumen del lead para el asesor y lo deja en el CRM.
-        const entityBrief = ctx.crmEntity ?? null;
-        if (entityBrief) {
-          const s = await getSession(ctx.conversationId);
-          if (!s.briefingDone) {
-            s.briefingDone = true;
-            await saveSession(ctx.conversationId, s);
-            void generarBriefing(ctx.conversationId, entityBrief, ctx.auth);
-          }
-        }
-
-        // Trae el asesor asignado (responsable del deal) para que el bot pueda nombrarlo al cliente.
-        let asesor: string | null = null;
-        if (ctx.crmEntities?.deal) {
-          try {
-            const { responsable } = await getDealAsesores(ctx.crmEntities.deal, ctx.auth);
-            if (responsable && !responsable.nombre.startsWith('Usuario ')) asesor = responsable.nombre;
-          } catch (e) {
-            log.warn('escalar_a_humano: no se pudo traer el responsable', { err: String(e) });
-          }
-        }
-        log.info('tool escalar_a_humano', { motivo: input?.motivo, chatId: ctx.chatId, asesor });
+      case 'consultar_progreso': {
+        if (!ctx?.personId) return NO_REGISTRADO;
+        const estado = await estadoAcademico(ctx.personId);
+        if (!estado) return { ok: false, error: 'bd_no_disponible' };
+        if (!estado.inscrito) return { ok: true, inscrito: false, mensaje: 'No está inscrito aún; ofrécele inscribirse.' };
         return {
           ok: true,
-          escalado: true,
-          asesor,
-          mensaje: asesor
-            ? `Conversación derivada. Informa al cliente, de forma cálida, que su asesor asignado ${asesor} lo contactará a la brevedad.`
-            : 'Conversación derivada a un asesor. Informa al cliente que un asesor lo contactará a la brevedad.',
+          inscrito: true,
+          curso: estado.curso?.nombre,
+          estadoInscripcion: estado.enrollment?.estado,
+          completadas: estado.completadas,
+          total: estado.totalLecciones,
+          minutosAcumulados: estado.enrollment?.minutosAcumulados,
+          proxima: estado.proxima ?? null,
+          ...(await practicaPendiente(ctx.personId)),
+        };
+      }
+
+      case 'continuar_curso': {
+        if (!ctx?.personId) return NO_REGISTRADO;
+        const entrega = await entregarLeccionActual(ctx.personId);
+        if (!entrega) {
+          // Ya completó el curso (o no está inscrito). Si le quedan quizzes por rendir, es lo único
+          // que todavía puede hacer: se informa para que el tutor lo ofrezca en vez de dejarlo sin
+          // nada. Ver quizzesPendientes.
+          return {
+            ok: false,
+            error: 'sin_leccion_pendiente',
+            mensaje: 'No hay lección pendiente: o no está inscrito, o ya completó el curso (consulta el progreso).',
+            ...(await practicaPendiente(ctx.personId)),
+          };
+        }
+        void audit({ type: 'leccion_entregada', dialogId: ctx?.conversationId, detail: { orden: entrega.leccion.orden } });
+        return { ok: true, posicion: entrega.posicion, leccion: entrega.leccion };
+      }
+
+      case 'completar_leccion': {
+        if (!ctx?.personId) return NO_REGISTRADO;
+        const r = await completarLeccionActual(ctx.personId);
+        if (!r) return { ok: false, error: 'sin_leccion_pendiente' };
+        if ('requiereEntrega' in r) {
+          return {
+            ok: false,
+            error: 'leccion_no_entregada',
+            mensaje: `La microcápsula ${r.requiereEntrega.orden} ("${r.requiereEntrega.titulo}") aún no le ha sido entregada al estudiante: usa continuar_curso para entregársela primero (con su material); solo después de verla se puede completar.`,
+          };
+        }
+        void audit({
+          type: 'leccion_completada',
+          dialogId: ctx?.conversationId,
+          detail: { orden: r.completada.orden, minutos: r.minutosAcumulados, finCurso: r.cursoCompletado },
+        });
+        // ¿La microcápsula completada tiene mini-quiz? Se deja marcado para que el pipeline lo
+        // envíe en cuanto salga esta respuesta (F7). El quiz NO se ofrece: se conduce siempre.
+        const quiz = await quizDeLeccion(r.completada.id);
+        if (quiz && ctx?.conversationId) await marcarQuizPendiente(ctx.conversationId, r.cursoCompletado);
+        return {
+          ok: true,
+          completada: { orden: r.completada.orden, titulo: r.completada.titulo },
+          minutosAcumulados: r.minutosAcumulados,
+          cursoCompletado: r.cursoCompletado,
+          siguiente: r.siguiente ?? null,
+          ...(quiz
+            ? { quizDisponible: true, instruccionQuiz: 'El sistema enviará el mini-quiz de práctica INMEDIATAMENTE después de tu mensaje. Felicita el avance en UNA o dos frases y anuncia el quiz en una línea ("ahora unas preguntas rápidas para afianzarlo"). NO preguntes si quiere hacerlo, NO ofrezcas continuar con la próxima microcápsula y NO formules tú las preguntas: ya está en camino.' }
+            : {}),
+          ...(r.cursoCompletado
+            ? { mensaje: 'Felicita al estudiante: terminó todas las microcápsulas. Ya puede obtener su certificado: dile que escriba *certificado* y el sistema lo guiará (RUT + verificación de correo). NO conduzcas tú ese proceso ni pidas el RUT.' }
+            : {}),
+        };
+      }
+
+      case 'buscar_contenido_curso': {
+        const consulta = String((_input as any)?.consulta ?? '').trim();
+        if (consulta.length < 3) return { ok: false, error: 'consulta_invalida' };
+        // Curso del estudiante si está inscrito; si no, el curso activo (las preguntas de contenido
+        // no exigen inscripción durante el piloto).
+        const estado = ctx?.personId ? await estadoAcademico(ctx.personId) : null;
+        const cursoId = estado?.curso?.id ?? (await cursoActivo())?.id;
+        if (!cursoId) return { ok: false, error: 'sin_curso_activo' };
+        const r = await buscarContenidoCurso(cursoId, consulta);
+        void audit({ type: 'rag_busqueda', dialogId: ctx?.conversationId, detail: { encontrado: r.encontrado, disponible: r.disponible, n: r.resultados.length } });
+        if (!r.disponible) {
+          return { ok: false, error: 'rag_no_disponible', mensaje: 'El buscador de material no está operativo ahora; discúlpate brevemente y ofrece intentar más tarde.' };
+        }
+        if (!r.encontrado) {
+          return {
+            ok: true,
+            encontrado: false,
+            mensaje: 'El material del curso NO cubre esta pregunta. Dilo honestamente, ofrece anotar la duda para el equipo docente, y si entregas una orientación general etiquétala explícitamente como fuera del material del curso.',
+          };
+        }
+        return {
+          ok: true,
+          encontrado: true,
+          instruccion: 'Responde SOLO con base en estos fragmentos y cita la fuente (p. ej. "según la Microcápsula 5").',
+          fragmentos: r.resultados.map((f) => ({ fuente: f.fuente, texto: f.texto })),
         };
       }
 
       default:
-        return { ok: false, error: 'UNKNOWN_TOOL' };
+        log.warn('executeTool: tool no implementada', { name });
+        return { ok: false, error: `tool_no_implementada:${name}` };
     }
   } catch (e) {
-    log.error('tool error', { name, err: String(e) });
+    log.error('executeTool: error', { name, err: String(e) });
     return { ok: false, error: String(e) };
   }
 }

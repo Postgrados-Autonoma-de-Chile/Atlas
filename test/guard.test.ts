@@ -2,17 +2,17 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Request, Response } from 'express';
 
-// requireAllowedOrigin (ALT-Alta-2 de la auditoría): allowlist de Origin/Referer para /webchat/message.
-// config.webchatAllowedOrigins se calcula al importar src/config.ts, así que las env vars deben quedar
-// fijadas ANTES del import (mismo patrón que test/meta.test.ts con META_*).
+// tokenGuard (requireDashboardToken): auth por HEADER en tiempo constante. Cubre el hueco señalado
+// por la auditoría (el guard de tokens no tenía tests) y verifica que la query string YA NO autentica.
+process.env.REDIS_URL = '';
+process.env.DATABASE_URL = '';
 process.env.NODE_ENV = 'test';
-process.env.BASE_URL = 'https://bot.example.com';
-process.env.WEBCHAT_ALLOWED_ORIGINS = 'https://postgrados.uautonoma.cl';
+process.env.DASHBOARD_TOKEN = 'tok-panel-test';
 
-const { requireAllowedOrigin } = await import('../src/routes/guard');
+const { requireDashboardToken } = await import('../src/routes/guard');
 
-function fakeReq(headers: Record<string, string>): Request {
-  return { header: (name: string) => headers[name.toLowerCase()] } as unknown as Request;
+function fakeReq(headers: Record<string, string>, query: Record<string, string> = {}): Request {
+  return { header: (n: string) => headers[n.toLowerCase()], query } as unknown as Request;
 }
 function fakeRes() {
   const res: any = { statusCode: 200, body: undefined };
@@ -21,44 +21,25 @@ function fakeRes() {
   return res as Response & { statusCode: number; body: any };
 }
 
-test('requireAllowedOrigin: origen en la allowlist deja pasar (next)', () => {
-  const req = fakeReq({ origin: 'https://postgrados.uautonoma.cl' });
+test('requireDashboardToken: header correcto deja pasar (next)', () => {
   const res = fakeRes();
   let called = false;
-  requireAllowedOrigin(req, res, () => { called = true; });
+  requireDashboardToken(fakeReq({ 'x-dashboard-token': 'tok-panel-test' }), res, () => { called = true; });
   assert.equal(called, true);
 });
 
-test('requireAllowedOrigin: el propio BASE_URL siempre está permitido', () => {
-  const req = fakeReq({ origin: 'https://bot.example.com' });
+test('requireDashboardToken: header incorrecto → 401', () => {
   const res = fakeRes();
   let called = false;
-  requireAllowedOrigin(req, res, () => { called = true; });
-  assert.equal(called, true);
-});
-
-test('requireAllowedOrigin: acepta el origin derivado del Referer si falta Origin', () => {
-  const req = fakeReq({ referer: 'https://postgrados.uautonoma.cl/carreras/mba' });
-  const res = fakeRes();
-  let called = false;
-  requireAllowedOrigin(req, res, () => { called = true; });
-  assert.equal(called, true);
-});
-
-test('requireAllowedOrigin: origen fuera de la allowlist responde 403', () => {
-  const req = fakeReq({ origin: 'https://otro-sitio.cualquiera.com' });
-  const res = fakeRes();
-  let called = false;
-  requireAllowedOrigin(req, res, () => { called = true; });
+  requireDashboardToken(fakeReq({ 'x-dashboard-token': 'malo' }), res, () => { called = true; });
   assert.equal(called, false);
-  assert.equal(res.statusCode, 403);
+  assert.equal(res.statusCode, 401);
 });
 
-test('requireAllowedOrigin: sin Origin ni Referer responde 403', () => {
-  const req = fakeReq({});
+test('requireDashboardToken: el token por query string YA NO autentica', () => {
   const res = fakeRes();
   let called = false;
-  requireAllowedOrigin(req, res, () => { called = true; });
+  requireDashboardToken(fakeReq({}, { k: 'tok-panel-test' }), res, () => { called = true; });
   assert.equal(called, false);
-  assert.equal(res.statusCode, 403);
+  assert.equal(res.statusCode, 401);
 });

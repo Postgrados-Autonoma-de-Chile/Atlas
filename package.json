@@ -1,34 +1,44 @@
 {
-  "name": "poc-agente-bitrix24",
-  "version": "0.1.0",
+  "name": "atlas",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "PoC F1 — Bot de Open Lines (imbot TYPE=O) sobre ChatApp + smoke tests Bitrix/Anthropic",
+  "description": "ATLAS — tutor educativo de IA por WhatsApp (Universidad Autónoma de Chile)",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=cjs --outfile=dist/index.cjs --external:pg-native --sourcemap",
+    "start:prod": "node dist/index.cjs",
+    "migrate": "node-pg-migrate -m migrations up",
+    "migrate:down": "node-pg-migrate -m migrations down",
     "smoke:anthropic": "tsx scripts/smoke-anthropic.ts",
-    "smoke:bitrix": "tsx scripts/smoke-bitrix.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-test-module-mocks --import tsx --test \"test/*.test.ts\""
+    "test": "node --experimental-test-module-mocks --import tsx --test \"test/*.test.ts\"",
+    "eval:tutor": "tsx scripts/evaluar-tutor.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.40.0",
-    "bottleneck": "^2.19.5",
+    "@anthropic-ai/sdk": "^0.122.0",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "google-auth-library": "^9.15.1",
     "ioredis": "^5.4.2",
+    "nodemailer": "^9.1.0",
     "pdf-lib": "^1.17.1",
     "pg": "^8.13.1",
-    "tsx": "^4.19.2"
+    "qrcode-generator": "^2.0.4",
+    "tsx": "^4.19.2",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/node": "^22.10.0",
+    "@types/nodemailer": "^8.0.1",
     "@types/pg": "^8.11.10",
+    "esbuild": "^0.28.2",
+    "node-pg-migrate": "^9.0.0",
     "typescript": "^5.7.2"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   }
 }

@@ -1,9 +1,11 @@
 import crypto from 'crypto';
+import { config } from '../config';
 
-// Cifrado de tokens OAuth en reposo (AES-256-GCM). La clave va en TOKEN_ENC_KEY (32 bytes en hex = 64 chars).
-// Si no hay clave válida, se degrada a texto plano (compatibilidad) — así la migración es transparente:
-// los valores ya guardados en claro se leen igual, y los nuevos se cifran en cuanto se define la clave.
-const KEY_HEX = process.env.TOKEN_ENC_KEY ?? '';
+// Cifrado en reposo (AES-256-GCM) de PII sensible (email/RUT del estudiante). La clave va en
+// TOKEN_ENC_KEY (32 bytes en hex = 64 chars). F12: en PRODUCCIÓN la clave es OBLIGATORIA y validada
+// al arrancar (config.ts) — la degradación a texto plano solo existe en desarrollo, para que los
+// valores guardados en claro sigan legibles mientras se define la clave.
+const KEY_HEX = config.tokenEncKey;
 const MARKER = 'enc:v1:';
 
 function key(): Buffer | null {

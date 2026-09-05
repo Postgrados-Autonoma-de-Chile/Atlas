@@ -1,230 +1,256 @@
 import 'dotenv/config';
+import { z } from 'zod';
 
-// Mapa de etapas por embudo para el movimiento por score, ej:
-// {"1":{"alto":"C1:PREPARATION","medio":"C1:UC_JARL1O"},"3":{"alto":"C3:PREPAYMENT_INVOICE","medio":"C3:PREPARATION"}}
-function parseStageMap(s?: string): Record<string, { alto?: string; medio?: string }> {
-  if (!s) return {};
-  try {
-    return JSON.parse(s);
-  } catch {
-    return {};
-  }
+// Configuración central de ATLAS, validada con zod al arrancar (Fase 2).
+// - Un valor MALFORMADO (número inválido, enum desconocido) detiene el proceso en cualquier entorno:
+//   se acabó el patrón heredado de "tragar el error y caer a un default silencioso".
+// - En PRODUCCIÓN además es fail-fast por AUSENCIA: los secretos obligatorios deben existir.
+
+const Env = z.object({
+  PORT: z.coerce.number().int().positive().default(3000),
+  BASE_URL: z.string().default(''),
+  NODE_ENV: z.string().default(''),
+
+  // ── LLM (Anthropic) ──
+  ANTHROPIC_API_KEY: z.string().default(''),
+  ANTHROPIC_MODEL: z.string().default('claude-sonnet-5'),
+  ANTHROPIC_CLASSIFIER: z.string().default('claude-haiku-4-5'),
+  /** Esfuerzo de razonamiento por turno. 'low' es el punto de partida para chat de WhatsApp
+   *  (latencia y costo); se re-evalúa con el harness pedagógico en Fase 6. */
+  ANTHROPIC_EFFORT: z.enum(['low', 'medium', 'high']).default('low'),
+  ANTHROPIC_TIMEOUT_MS: z.coerce.number().int().positive().default(45_000),
+  ANTHROPIC_MAX_RETRIES: z.coerce.number().int().min(0).default(2),
+  /** Precios USD/MTok para el costo estimado en /metrics (default: Sonnet 5). */
+  LLM_USD_IN: z.coerce.number().min(0).default(2),
+  LLM_USD_OUT: z.coerce.number().min(0).default(10),
+  LLM_USD_CACHE_WRITE: z.coerce.number().min(0).default(2.5),
+  LLM_USD_CACHE_READ: z.coerce.number().min(0).default(0.2),
+
+  // ── STT (notas de voz) ──
+  DEEPGRAM_API_KEY: z.string().default(''),
+  DEEPGRAM_MODEL: z.string().default('nova-2'),
+
+  // ── Persistencia ──
+  REDIS_URL: z.string().default(''),
+  DATABASE_URL: z.string().default(''),
+  /** 'true' valida el certificado del servidor; 'no-verify' solo para legado (F12). */
+  PGSSL: z.enum(['true', 'false', 'no-verify']).default('false'),
+  PGPOOL_MAX: z.coerce.number().int().positive().default(10),
+
+  // ── WhatsApp Cloud API (Meta) ──
+  META_VERIFY_TOKEN: z.string().default(''),
+  META_APP_SECRET: z.string().default(''),
+  /** 'meta' = Cloud API directo · 'chattigo' = BSP Chattigo · '' = envío desactivado. */
+  WA_PROVIDER: z.enum(['meta', 'chattigo', '']).default(''),
+  WA_CLOUD_PHONE_NUMBER_ID: z.string().default(''),
+  WA_CLOUD_TOKEN: z.string().default(''),
+  WA_GRAPH_VERSION: z.string().regex(/^v\d+\.\d+$/).default('v23.0'),
+
+  // ── BSP Chattigo (alternativa a Cloud API directo) ──
+  /** Base de la API, SIN barra final. Chattigo no publica las URLs de sus ambientes: hay que
+   *  pedírselas (son distintas en desarrollo y producción). */
+  CHATTIGO_BASE_URL: z.string().default(''),
+  CHATTIGO_USER: z.string().default(''),
+  CHATTIGO_PASS: z.string().default(''),
+  /** Número de la cuenta en Chattigo (campo `did`), en formato internacional SIN '+'. */
+  CHATTIGO_DID: z.string().default(''),
+  /** Campaña a la que pertenece el bot (campo `idCampaign`). */
+  CHATTIGO_ID_CAMPAIGN: z.coerce.number().int().nonnegative().default(0),
+  /** Nombre con el que el bot se identifica en los mensajes salientes (campo `botName`). */
+  CHATTIGO_BOT_NAME: z.string().default('ATLAS'),
+  /** Base del servicio de PLANTILLAS (HSM). Es OTRO host que el de la API del bot. */
+  CHATTIGO_HSM_BASE_URL: z.string().default('https://login.chattigo.com/message'),
+  /** Namespace de plantillas del Business Manager. Obligatorio para enviar HSM. */
+  CHATTIGO_NAMESPACE: z.string().default(''),
+  /**
+   * Secreto compartido para autenticar el webhook ENTRANTE.
+   *
+   * Chattigo NO firma sus webhooks: la documentación solo describe un POST a la URL del cliente que
+   * debe responder 200. Sin esto, cualquiera que descubra la ruta puede hacerse pasar por un
+   * estudiante, alterar su progreso o disparar la emisión de un certificado. Se exige por header
+   * (x-atlas-token) o, si Chattigo no permite headers personalizados, en la propia ruta.
+   */
+  CHATTIGO_WEBHOOK_TOKEN: z.string().default(''),
+
+  // ── Seguridad / observabilidad ──
+  DASHBOARD_TOKEN: z.string().default(''),
+  AUDIT_RETENTION_DAYS: z.coerce.number().int().min(0).default(90),
+  /** Clave AES-256-GCM (64 hex) para PII en reposo. Obligatoria en producción (F12). */
+  TOKEN_ENC_KEY: z.string().regex(/^([0-9a-fA-F]{64})?$/, 'debe ser 64 caracteres hex (32 bytes)').default(''),
+  /** F12: los guards y verificaciones de firma son FAIL-CLOSED por defecto en todos los entornos.
+   *  Solo con DEV_FAIL_OPEN=true (y nunca en producción) se permite operar sin secretos en local. */
+  DEV_FAIL_OPEN: z.enum(['true', 'false']).default('false'),
+
+  // ── Límites ──
+  RATE_LIMIT_MAX: z.coerce.number().int().positive().default(600),
+  RATE_LIMIT_STRICT: z.coerce.number().int().positive().default(240),
+  MAX_CONCURRENT_TURNS: z.coerce.number().int().positive().default(8),
+
+  // ── Memoria conversacional (la académica vive en Postgres, F3-4) ──
+  MEMORY_TTL_HOURS: z.coerce.number().int().positive().default(48),
+  MEMORY_MAX_TURNS: z.coerce.number().int().positive().default(24),
+
+  // ── Pub/Sub (F11: split webhook/worker). Vacío = despacho in-process (dev / piloto 1 servicio) ──
+  /** Ruta completa del topic: projects/<proyecto>/topics/atlas-turnos */
+  PUBSUB_TOPIC: z.string().regex(/^(projects\/[^/]+\/topics\/[^/]+)?$/).default(''),
+  /** Endpoint regional recomendado con ordering (p. ej. https://us-east1-pubsub.googleapis.com). */
+  PUBSUB_ENDPOINT: z.string().url().default('https://pubsub.googleapis.com'),
+  /** Service account que firma el OIDC del push (fail-closed sin ella). */
+  PUBSUB_PUSH_SA: z.string().default(''),
+  PUBSUB_PUSH_AUDIENCE: z.string().default(''),
+
+  // ── Correo (F8: certificados y códigos de verificación) — SMTP genérico ──
+  SMTP_HOST: z.string().default(''),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_USER: z.string().default(''),
+  SMTP_PASS: z.string().default(''),
+  /** Remitente, p. ej. "ATLAS UAutónoma <atlas@uautonoma.cl>". Sin host/from → correos omitidos (dev). */
+  SMTP_FROM: z.string().default(''),
+
+  // ── Recordatorios (F9) ──
+  /** Nombre de la plantilla utility APROBADA por Meta para recordatorios fuera de ventana 24h. */
+  WA_TEMPLATE_RECORDATORIO: z.string().default(''),
+  WA_TEMPLATE_LANG: z.string().default('es'),
+  /** Días de inactividad antes de recordar (y ventana del dedupe: máx. 1 recordatorio cada N días). */
+  REMINDER_DIAS_INACTIVIDAD: z.coerce.number().int().positive().default(3),
+  /** Tope de recordatorios sin nueva actividad del estudiante (luego se deja de insistir). */
+  REMINDER_MAX_SIN_ACTIVIDAD: z.coerce.number().int().positive().default(3),
+
+  // ── Convocatoria de cohortes ──
+  /** Apagada por defecto: encenderla gasta plantillas pagadas y consume el tramo de Meta. */
+  CONVOCATORIA_ACTIVA: z.enum(['true', 'false']).default('false'),
+  /** Plantilla de invitación APROBADA por Meta. Sin ella no se envía nada aunque esté activa. */
+  CONVOCATORIA_TEMPLATE: z.string().default(''),
+  /** Cupo por oleada (el job corre por Cloud Scheduler) y por día (tramo de Meta). */
+  CONVOCATORIA_MAX_POR_CORRIDA: z.coerce.number().int().positive().default(100),
+  CONVOCATORIA_MAX_POR_DIA: z.coerce.number().int().positive().default(500),
+  /** Reintentos por invitación fallida. Un ok:false del proveedor significa que NO envió, así que
+   *  reintentar no arriesga pagar dos veces; el tope evita insistir contra un número inexistente. */
+  CONVOCATORIA_MAX_INTENTOS: z.coerce.number().int().positive().default(2),
+  /** Número del tutor en formato libre: el enlace wa.me se arma con sus dígitos. */
+  WA_ME_NUMERO: z.string().default(''),
+  WA_ME_TEXTO: z.string().default('Hola, quiero inscribirme en el curso de IA'),
+
+  // ── RAG (F5): embeddings Gemini + pgvector ──
+  GEMINI_API_KEY: z.string().default(''),
+  EMBEDDING_MODEL: z.string().default('gemini-embedding-001'),
+  /** Dimensiones Matryoshka del embedding; debe calzar con vector(N) de la migración 0005. */
+  EMBEDDING_DIM: z.coerce.number().int().positive().default(768),
+  /** Similitud coseno mínima para considerar un chunk relevante (bajo esto → "no está en el material"). */
+  RAG_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.55),
+  RAG_TOP_K: z.coerce.number().int().positive().max(20).default(6),
+});
+
+const parsed = Env.safeParse(process.env);
+if (!parsed.success) {
+  const detalle = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(' · ');
+  throw new Error(`Configuración inválida — corrige las variables de entorno: ${detalle}`);
 }
+const env = parsed.data;
+const isProd = env.NODE_ENV === 'production';
 
-// Extrae el origin (scheme+host+port) de una URL completa, para comparar contra el header Origin.
-function originOf(url: string): string {
-  try {
-    return new URL(url).origin;
-  } catch {
-    return '';
-  }
-}
-
-// Mapa simple embudo→etapa (un solo STAGE_ID por embudo), ej: {"1":"C1:UC_ABC","3":"C3:UC_XYZ"}
-function parseSimpleStageMap(s?: string): Record<string, string> {
-  if (!s) return {};
-  try {
-    const p = JSON.parse(s);
-    return p && typeof p === 'object' ? p : {};
-  } catch {
-    return {};
-  }
-}
-
-// Etiquetas de embudo por CATEGORY_ID. Default: 0=General, 1=Diplomados, 3=Magísteres.
-function parseFunnelLabels(s?: string): Record<string, string> {
-  const def = { '0': 'General', '1': 'Diplomados', '3': 'Magísteres' };
-  if (!s) return def;
-  try {
-    const p = JSON.parse(s);
-    return p && typeof p === 'object' && Object.keys(p).length ? p : def;
-  } catch {
-    return def;
-  }
-}
-
-export type MarchaBlancaPrograma = {
-  key: string;
-  nombre: string;
-  /** Substring (ILIKE / Bitrix "%") para identificar el programa en texto libre capturado por el bot. */
-  match: string;
-  /** Substring a EXCLUIR (evita confundir con un programa homónimo, ej. "...y Derecho"). */
-  exclude?: string;
-  asesorNorte?: string;
-  asesorSur?: string;
-  /** CATEGORY_ID (embudo) del Deal en Bitrix — acota la búsqueda ANTES del filtro de texto en el UF
-   *  de programa (evita OPERATION_TIME_LIMIT: sin esto, crm.deal.list escanea TODO el portal). */
-  categoryId: number;
-};
-
-// Programas del piloto ("marcha blanca") a medir en el panel. Configurable por si cambian sin tocar
-// código; el default son los 2 programas confirmados para el piloto (ver conversación de lanzamiento).
-function parseMarchaBlancaProgramas(s?: string): MarchaBlancaPrograma[] {
-  const def: MarchaBlancaPrograma[] = [
-    {
-      key: 'terapia_familiar',
-      nombre: 'Diplomado en Intervención Terapéutica Familiar',
-      match: 'Terapéutica Familiar',
-      asesorNorte: 'Joaquín',
-      asesorSur: 'Eduardo',
-      categoryId: 1, // Diplomados
-    },
-    {
-      key: 'ia',
-      nombre: 'Diplomado en Inteligencia Artificial',
-      match: 'Inteligencia Artificial',
-      exclude: 'Derecho', // no confundir con "Diplomado en Inteligencia Artificial y Derecho"
-      asesorNorte: 'Zaida',
-      asesorSur: 'Constanza',
-      categoryId: 1, // Diplomados
-    },
-  ];
-  if (!s) return def;
-  try {
-    const p = JSON.parse(s);
-    return Array.isArray(p) && p.length ? p : def;
-  } catch {
-    return def;
-  }
+// Fail-fast por ausencia en producción (fail-closed: sin esto, los guards rechazarían en runtime,
+// pero es mejor no arrancar un servicio a medias).
+if (isProd) {
+  const obligatorias: Record<string, string> = {
+    ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY,
+    REDIS_URL: env.REDIS_URL,
+    DATABASE_URL: env.DATABASE_URL,
+    META_VERIFY_TOKEN: env.META_VERIFY_TOKEN,
+    META_APP_SECRET: env.META_APP_SECRET,
+    DASHBOARD_TOKEN: env.DASHBOARD_TOKEN,
+    TOKEN_ENC_KEY: env.TOKEN_ENC_KEY, // F12: sin clave no hay PII en reposo cifrada → no se arranca
+    WA_CLOUD_PHONE_NUMBER_ID: env.WA_CLOUD_PHONE_NUMBER_ID,
+    WA_CLOUD_TOKEN: env.WA_CLOUD_TOKEN,
+  };
+  const faltan = Object.entries(obligatorias).filter(([, v]) => !v).map(([k]) => k);
+  if (faltan.length) throw new Error(`Producción sin variables obligatorias: ${faltan.join(', ')}`);
+  if (env.DEV_FAIL_OPEN === 'true') throw new Error('DEV_FAIL_OPEN=true está prohibido en producción');
 }
 
 export const config = {
-  port: Number(process.env.PORT ?? 3000),
-  /** URL pública del app (Railway o túnel), sin slash final. */
-  baseUrl: (process.env.BASE_URL ?? '').replace(/\/$/, ''),
-  anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? '',
-  model: process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-6',
-  classifierModel: process.env.ANTHROPIC_CLASSIFIER ?? 'claude-haiku-4-5',
-  // STT (voz-a-texto) para transcribir los audios que el cliente manda por WhatsApp. Sin esta key, los
-  // audios no se transcriben (se responde pidiendo el mensaje por texto). Deepgram nova-2 (español).
-  deepgramApiKey: process.env.DEEPGRAM_API_KEY ?? '',
-  deepgramModel: process.env.DEEPGRAM_MODEL ?? 'nova-2',
-  bitrixWebhookUrl: (process.env.BITRIX_WEBHOOK_URL ?? '').replace(/\/$/, ''),
-  botCode: process.env.BOT_CODE ?? 'poc_agente_postgrados',
-  // OAuth de la app local (para renovar el access_token cuando expira).
-  bitrixClientId: process.env.BITRIX_CLIENT_ID ?? '',
-  bitrixClientSecret: process.env.BITRIX_CLIENT_SECRET ?? '',
-  // application_token que Bitrix envía en cada evento/instalación (verificación de origen del webhook).
-  bitrixAppToken: process.env.BITRIX_APPLICATION_TOKEN ?? '',
-  // Secretos propios del backend para proteger paneles (DASHBOARD_TOKEN) y utilidades admin (ADMIN_TOKEN).
-  dashboardToken: process.env.DASHBOARD_TOKEN ?? '',
-  adminToken: process.env.ADMIN_TOKEN ?? '',
-  // Fallback de BOT_ID (el storage de Railway es efímero entre deploys).
-  botId: process.env.BITRIX_BOT_ID ? Number(process.env.BITRIX_BOT_ID) : undefined,
-  // Persistencia (opcionales; si faltan, se usa memoria/no-op).
-  redisUrl: process.env.REDIS_URL ?? '',
-  databaseUrl: process.env.DATABASE_URL ?? '',
-  pgSsl: process.env.PGSSL === 'true',
-  // Códigos de campos personalizados (UF) opcionales para guardar el scoring en el CRM (en el Deal/Negociación).
-  ufScore: process.env.BITRIX_UF_SCORE ?? '',
-  ufIntent: process.env.BITRIX_UF_INTENT ?? '',
-  ufSentiment: process.env.BITRIX_UF_SENTIMENT ?? '',
-  // Campo UF (en el Deal) para el "Programa de interés" que el bot actualiza según la conversación.
-  ufPrograma: process.env.BITRIX_UF_PROGRAMA ?? '',
-  // Campo UF tipo "Archivo" (en el Deal) con el brochure (PDF del Drive) del programa de interés —
-  // para que la automatización de "Información enviada" (Bitrix24) lo adjunte al correo. Se
-  // actualiza junto con ufPrograma (ver crm/driveBrochure.ts).
-  ufBrochureFile: process.env.BITRIX_UF_BROCHURE_FILE ?? '',
-  // Slots adicionales para adjuntar los brochures como archivos SEPARADOS (no fusionados) cuando
-  // hay varios programas de interés — el 1º programa va al de arriba, el 2º acá, el 3º acá. Si se
-  // acumulan más programas que slots, los que sobran se fusionan en el ÚLTIMO slot disponible.
-  ufBrochureFile2: process.env.BITRIX_UF_BROCHURE_FILE_2 ?? '',
-  ufBrochureFile3: process.env.BITRIX_UF_BROCHURE_FILE_3 ?? '',
-  // Campo UF tipo "String" (en el Deal) con el cuerpo HTML del correo del brochure ya renderizado
-  // por el bot (con TODOS los programas acumulados durante la conversación) — la plantilla bizproc
-  // solo lo referencia vía {=Document:...}, sin necesitar loops nativos (ver crm/brochureEmail.ts).
-  ufCuerpoBrochureHtml: process.env.BITRIX_UF_CUERPO_BROCHURE_HTML ?? '',
-  // Etapa "Asignación" del embudo correcto según el TIPO de programa (magíster/diplomado) —
-  // mover el deal ahí dispara la regla de asignación de asesor por oferta que ya existe en
-  // Bitrix24 (configurada por el equipo, fuera de este código). Sin esto, cuando Bitrix vincula un
-  // deal por su cuenta lo deja en un embudo/etapa fijos que no coinciden con el programa real, y la
-  // regla de asignación nunca corre — el deal queda sin asesor asignado.
-  asignacionStageDiplomado: process.env.BITRIX_ASIGNACION_STAGE_DIPLOMADO ?? 'C1:NEW',
-  asignacionStageMagister: process.env.BITRIX_ASIGNACION_STAGE_MAGISTER ?? 'C3:NEW',
-  // IDs de las carpetas del Drive ("Brochures Bot/<tipo>") donde viven los PDF de cada tipo de programa.
-  driveFolderMagister: process.env.BITRIX_DRIVE_FOLDER_MAGISTER ?? '',
-  driveFolderDiplomado: process.env.BITRIX_DRIVE_FOLDER_DIPLOMADO ?? '',
-  driveFolderEspecialidad: process.env.BITRIX_DRIVE_FOLDER_ESPECIALIDAD ?? '',
-  // ID de la plantilla de Proceso de Negocio (bizproc) de Bitrix24 que envía el correo con el
-  // brochure adjunto (actividad CrmSendEmailActivity, lee el programa/brochure directo del Deal).
-  // El bot la dispara por API (bizproc.workflow.start) apenas adjunta un brochure nuevo — no
-  // depende de mover etapas ni de una Automation Rule nativa.
-  bizprocTemplateBrochure: process.env.BITRIX_BIZPROC_TEMPLATE_BROCHURE ?? '',
-  // Contacto de admisión que se muestra en el correo (opcionales): link/número de WhatsApp y teléfono.
-  admisionesWhatsapp: process.env.ADMISIONES_WHATSAPP ?? '',
-  admisionesTelefono: process.env.ADMISIONES_TELEFONO ?? '',
-  // Mover la etapa del deal según el score. Mapa por embudo (recomendado, multi-flujo):
-  stageMap: parseStageMap(process.env.BITRIX_STAGE_MAP),
-  // Etiquetas legibles por CATEGORY_ID de embudo, para el panel (C1=Diplomados, C3=Magísteres).
-  funnelLabels: parseFunnelLabels(process.env.BITRIX_FUNNEL_LABELS),
-  // Fallback de un solo embudo (legacy):
-  stageScoreAlto: process.env.BITRIX_STAGE_SCORE_ALTO ?? '', // score >= 70
-  stageScoreMedio: process.env.BITRIX_STAGE_SCORE_MEDIO ?? '', // score 40-69
-  // Auto-escalar a humano si el score alcanza este umbral (0 = desactivado).
-  scoreEscalar: Number(process.env.SCORE_ESCALAR ?? 80),
-  // Auto-LLAMAR por voz (Vapi) si el score alcanza este umbral (0 = desactivado). Ej: 50.
-  scoreLlamar: Number(process.env.SCORE_LLAMAR ?? 0),
-  // Sincronización de llamadas a Postgres (para KPIs exactos del período):
-  callsSyncMinutes: Number(process.env.CALLS_SYNC_MINUTES ?? 0), // 0 = scheduler desactivado (se puede sincronizar manual)
-  callsSyncSince: process.env.CALLS_SYNC_SINCE ?? '', // backfill inicial desde esta fecha ISO (vacío = últimos 90 días)
-  // Retención de auditoría: borra audit_log más antiguo que N días (0 = desactivado, no borra nada).
-  auditRetentionDays: Number(process.env.AUDIT_RETENTION_DAYS ?? 0),
-  // ── Marcha blanca (piloto): fecha de arranque (para "leads antiguos" vs "nuevos") y programas a medir ──
-  marchaBlancaStart: process.env.MARCHA_BLANCA_START ?? '2026-08-27',
-  marchaBlancaProgramas: parseMarchaBlancaProgramas(process.env.MARCHA_BLANCA_PROGRAMAS),
-  // Precio Anthropic por millón de tokens (USD) para estimar costo en el panel (0 = no mostrar).
-  costInPerMtok: Number(process.env.ANTHROPIC_COST_IN_PER_MTOK ?? 0),
-  costOutPerMtok: Number(process.env.ANTHROPIC_COST_OUT_PER_MTOK ?? 0),
+  isProd,
+  port: env.PORT,
+  /** URL pública del servicio (Cloud Run o túnel local), sin slash final. */
+  baseUrl: env.BASE_URL.replace(/\/$/, ''),
 
-  // ── Fase 2: Agente de voz (Vapi + Twilio + registro en telefonía Bitrix) ──
-  // Vapi corre la conversación (STT/TTS/barge-in + Claude) y llama a nuestro backend por webhooks.
-  vapiApiKey: process.env.VAPI_API_KEY ?? '', // API key privada de Vapi (para outbound / setup)
-  vapiAssistantId: process.env.VAPI_ASSISTANT_ID ?? '',
-  vapiPhoneNumberId: process.env.VAPI_PHONE_NUMBER_ID ?? '', // número (BYO Twilio) importado a Vapi
-  vapiSecret: process.env.VAPI_SECRET ?? '', // server.secret: Vapi lo envía en header x-vapi-secret
-  // ── WhatsApp Calling (patrón callback) ──
-  // Phone-number de Vapi del trunk BYO de WhatsApp (0e5c23be → credential 68a49314 → SBC → wa.meta.vc).
-  // Se usa para DEVOLVER la llamada al usuario que llamó por WhatsApp (la entrante no se puede atender
-  // directo por un límite de media de Vapi; ver Arquitectura-WhatsApp-Calling). Vacío = usa vapiPhoneNumberId.
-  vapiWhatsappPhoneNumberId:
-    process.env.VAPI_WHATSAPP_PHONE_NUMBER_ID ?? '0e5c23be-a872-4556-bdbf-fc09309b00e7',
-  // Secreto dedicado que el SBC Asterisk envía (?secret=) al golpear /whatsapp/inbound-call para
-  // gatillar el callback. Menor privilegio: NO reutilizamos VAPI_SECRET en la VM. Fail-closed en prod.
-  whatsappCallbackSecret: process.env.WHATSAPP_CALLBACK_SECRET ?? '',
-  // Registro de la llamada en el CRM de Bitrix (telephony.externalCall.*):
-  voiceUserId: Number(process.env.BITRIX_TELEPHONY_USER_ID ?? 0), // usuario Bitrix "dueño" de las llamadas
-  voiceLineNumber: process.env.BITRIX_TELEPHONY_LINE ?? '', // nº de línea externa (opcional)
-  // Destino de derivación a humano cuando no hay asesor asignado (número PSTN o SIP URI).
-  voiceTransferFallback: process.env.VOICE_TRANSFER_FALLBACK ?? '',
+  anthropicApiKey: env.ANTHROPIC_API_KEY,
+  model: env.ANTHROPIC_MODEL,
+  classifierModel: env.ANTHROPIC_CLASSIFIER,
+  llmEffort: env.ANTHROPIC_EFFORT,
+  anthropicTimeoutMs: env.ANTHROPIC_TIMEOUT_MS,
+  anthropicMaxRetries: env.ANTHROPIC_MAX_RETRIES,
+  preciosLlm: {
+    inUsd: env.LLM_USD_IN,
+    outUsd: env.LLM_USD_OUT,
+    cacheWriteUsd: env.LLM_USD_CACHE_WRITE,
+    cacheReadUsd: env.LLM_USD_CACHE_READ,
+  },
 
-  // ── Acciones de "lead caliente" cuando el agente de voz capta interés en un programa ──
-  // Etapa a la que mover el Deal, por embudo: {"1":"C1:UC_XXX","3":"C3:UC_YYY"}.
-  // Si no está, cae a config.stageMap[cat].alto (el mismo de scoring alto).
-  voiceStageMap: parseSimpleStageMap(process.env.VOICE_STAGE_MAP),
-  voiceStageInteresado: process.env.VOICE_STAGE_INTERESADO ?? '', // fallback de un solo embudo
-  // Minutos de plazo (DEADLINE) de la tarea al asesor. Default 15.
-  voiceTaskMinutes: Number(process.env.VOICE_TASK_MINUTES ?? 15),
-  // Asesor por defecto para la tarea si el Deal no tiene responsable (o es un lead nuevo). 0 = no crear.
-  voiceTaskUserId: Number(process.env.VOICE_TASK_FALLBACK_USER ?? 0),
+  deepgramApiKey: env.DEEPGRAM_API_KEY,
+  deepgramModel: env.DEEPGRAM_MODEL,
 
-  // Allowlist de orígenes permitidos para POST /webchat/message (defensa anti-abuso; ver ALT-Alta-2
-  // de la auditoría). Vacío = sin restricción (comportamiento previo). Incluye siempre el propio
-  // BASE_URL (el widget se sirve desde aquí mismo), más los que se agreguen en WEBCHAT_ALLOWED_ORIGINS.
-  webchatAllowedOrigins: Array.from(
-    new Set(
-      [
-        ...(process.env.BASE_URL ? [originOf(process.env.BASE_URL)] : []),
-        ...(process.env.WEBCHAT_ALLOWED_ORIGINS ?? '').split(',').map((s) => s.trim()),
-      ].filter(Boolean),
-    ),
-  ),
+  redisUrl: env.REDIS_URL,
+  databaseUrl: env.DATABASE_URL,
+  pgSsl: env.PGSSL,
+  pgPoolMax: env.PGPOOL_MAX,
 
-  // ── M4: canales Instagram/Messenger (Meta Graph API) ──
-  // Verificación del webhook (handshake GET, hub.verify_token) — cualquier string que definas al suscribir el webhook en Meta.
-  metaVerifyToken: process.env.META_VERIFY_TOKEN ?? '',
-  // App Secret de la app de Meta: firma cada POST del webhook (X-Hub-Signature-256); verifica su origen.
-  metaAppSecret: process.env.META_APP_SECRET ?? '',
-  // Page Access Token (con scopes pages_messaging + instagram_basic + instagram_manage_messages):
-  // se usa para enviar la respuesta por la Send API, tanto a Messenger como a Instagram.
-  metaPageAccessToken: process.env.META_PAGE_ACCESS_TOKEN ?? '',
+  metaVerifyToken: env.META_VERIFY_TOKEN,
+  metaAppSecret: env.META_APP_SECRET,
+  waProvider: env.WA_PROVIDER,
+  waCloudPhoneNumberId: env.WA_CLOUD_PHONE_NUMBER_ID,
+  waCloudToken: env.WA_CLOUD_TOKEN,
+  waGraphVersion: env.WA_GRAPH_VERSION,
+
+  chattigoBaseUrl: env.CHATTIGO_BASE_URL.replace(/\/$/, ''),
+  chattigoUser: env.CHATTIGO_USER,
+  chattigoPass: env.CHATTIGO_PASS,
+  chattigoDid: env.CHATTIGO_DID,
+  chattigoIdCampaign: env.CHATTIGO_ID_CAMPAIGN,
+  chattigoBotName: env.CHATTIGO_BOT_NAME,
+  chattigoHsmBaseUrl: env.CHATTIGO_HSM_BASE_URL.replace(/\/$/, ''),
+  chattigoNamespace: env.CHATTIGO_NAMESPACE,
+  chattigoWebhookToken: env.CHATTIGO_WEBHOOK_TOKEN,
+
+  dashboardToken: env.DASHBOARD_TOKEN,
+  auditRetentionDays: env.AUDIT_RETENTION_DAYS,
+  tokenEncKey: env.TOKEN_ENC_KEY,
+  devFailOpen: env.DEV_FAIL_OPEN === 'true',
+
+  rateLimitMax: env.RATE_LIMIT_MAX,
+  rateLimitStrict: env.RATE_LIMIT_STRICT,
+  maxConcurrentTurns: env.MAX_CONCURRENT_TURNS,
+
+  memoryTtlHours: env.MEMORY_TTL_HOURS,
+  memoryMaxTurns: env.MEMORY_MAX_TURNS,
+
+  pubsubTopic: env.PUBSUB_TOPIC,
+  pubsubEndpoint: env.PUBSUB_ENDPOINT,
+  pubsubPushSa: env.PUBSUB_PUSH_SA,
+  pubsubPushAudience: env.PUBSUB_PUSH_AUDIENCE,
+
+  smtpHost: env.SMTP_HOST,
+  smtpPort: env.SMTP_PORT,
+  smtpUser: env.SMTP_USER,
+  smtpPass: env.SMTP_PASS,
+  smtpFrom: env.SMTP_FROM,
+
+  waTemplateRecordatorio: env.WA_TEMPLATE_RECORDATORIO,
+  waTemplateLang: env.WA_TEMPLATE_LANG,
+  reminderDiasInactividad: env.REMINDER_DIAS_INACTIVIDAD,
+  reminderMaxSinActividad: env.REMINDER_MAX_SIN_ACTIVIDAD,
+
+  convocatoriaActiva: env.CONVOCATORIA_ACTIVA === 'true',
+  convocatoriaTemplate: env.CONVOCATORIA_TEMPLATE,
+  convocatoriaMaxPorCorrida: env.CONVOCATORIA_MAX_POR_CORRIDA,
+  convocatoriaMaxPorDia: env.CONVOCATORIA_MAX_POR_DIA,
+  convocatoriaMaxIntentos: env.CONVOCATORIA_MAX_INTENTOS,
+  waMeNumero: env.WA_ME_NUMERO,
+  waMeTexto: env.WA_ME_TEXTO,
+
+  geminiApiKey: env.GEMINI_API_KEY,
+  embeddingModel: env.EMBEDDING_MODEL,
+  embeddingDim: env.EMBEDDING_DIM,
+  ragMinScore: env.RAG_MIN_SCORE,
+  ragTopK: env.RAG_TOP_K,
 };

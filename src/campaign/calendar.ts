@@ -1,6 +1,17 @@
-import type { CampaignAgenda } from './programRegistry';
+// Calendario de ventanas horarias en TZ Chile (heredado de la campaña comercial; en Fase 9 se
+// convierte en la agenda de RECORDATORIOS de ATLAS: ventanas permitidas, días hábiles y feriados).
+export type CampaignAgenda = {
+  tz: string; // 'America/Santiago'
+  waves: string[]; // ['09:15','14:15','18:45']
+  maxPorDia: number;
+  maxDias: number;
+  maxTotal: number;
+  ventanaHabil: [string, string]; // ['09:00','19:00']
+  diasHabiles: number[]; // [1,2,3,4,5] (dom=0)
+  feriados: string[]; // ['2026-09-18', ...] YYYY-MM-DD
+};
 
-// ── Fase 4: calendario de la campaña (TZ Chile con DST) ──
+// ── Calendario (TZ Chile con DST) ──
 // Usa Intl con timeZone IANA ('America/Santiago') → hora de pared correcta con horario de verano/invierno,
 // sin librerías. PURO: sin I/O, testeable. El scheduler tickea cada minuto y consulta estos helpers.
 

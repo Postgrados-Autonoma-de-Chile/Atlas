@@ -34,11 +34,27 @@ export function recordLlmLatency(ms: number): void {
   if (memLatencies.length > LATENCY_CAP) memLatencies.shift();
 }
 
-/** Suma tokens de una respuesta Anthropic (usage) a los contadores. */
+/** Suma tokens de una respuesta Anthropic (usage) a los contadores — incluye caché (F13):
+ *  las lecturas de caché son el grueso del input real y cuestan 10× menos. */
 export function recordTokens(usage: any): void {
   if (!usage) return;
   inc('tokens_in', Number(usage.input_tokens) || 0);
   inc('tokens_out', Number(usage.output_tokens) || 0);
+  inc('tokens_cache_write', Number(usage.cache_creation_input_tokens) || 0);
+  inc('tokens_cache_read', Number(usage.cache_read_input_tokens) || 0);
+}
+
+export type PreciosLlm = { inUsd: number; outUsd: number; cacheWriteUsd: number; cacheReadUsd: number };
+
+/** Costo LLM estimado (USD) desde los contadores de tokens y precios por MTok (puro, F13). */
+export function costoEstimadoUsd(counters: Record<string, number>, p: PreciosLlm): number {
+  const usd =
+    ((counters['tokens_in'] ?? 0) * p.inUsd +
+      (counters['tokens_out'] ?? 0) * p.outUsd +
+      (counters['tokens_cache_write'] ?? 0) * p.cacheWriteUsd +
+      (counters['tokens_cache_read'] ?? 0) * p.cacheReadUsd) /
+    1_000_000;
+  return Math.round(usd * 10000) / 10000;
 }
 
 function pct(arr: number[], p: number): number {
