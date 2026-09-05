@@ -45,9 +45,16 @@ test('responde cualquier otra cosa: se considera caído', async () => {
 
 test('Redis no contesta: corta a los 2 s en vez de colgar el healthcheck', async () => {
   ping = () => new Promise(() => {}); // jamás resuelve
+  // El temporizador de corte de kvVivo() está unref'd a propósito: un healthcheck no debe
+  // retrasar el cierre del proceso. Bajo el runner eso deja el event loop sin nada que lo
+  // sostenga —el PING nunca vuelve— y node:test aborta el test antes de su aserción
+  // ('cancelledByParent'). Este temporizador sí referenciado lo mantiene vivo los 2 s que dura
+  // la medición, y se limpia enseguida para no retener el proceso.
+  const sosten = setTimeout(() => {}, 5000);
   const t0 = Date.now();
   const vivo = await kvVivo();
   const ms = Date.now() - t0;
+  clearTimeout(sosten);
   assert.equal(vivo, false, 'un PING que nunca vuelve significa caído');
   assert.ok(ms >= 1900 && ms < 3500, `debe cortar cerca de los 2 s, tardó ${ms} ms`);
 });
