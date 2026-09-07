@@ -4,6 +4,7 @@ import {
   siguientePregunta, guardarRespuesta, cerrarSiCompleta, respondidas, totalPreguntas,
   type PreguntaCaracterizacion,
 } from '../store/caracterizacion';
+import { inscribir, cursoActivo } from '../store/cursos';
 import { audit } from '../obs/audit';
 import type { InboundMessage, MessagingProvider } from '../messaging/types';
 import type { Persona } from '../store/personas';
@@ -63,9 +64,16 @@ const T = {
   intro: (intro: string, total: number) =>
     `Antes de comenzar el curso necesito hacerte ${total} preguntas breves 📋\n\n${intro}\n\n` +
     `Son de alternativas y toma un par de minutos. Si necesitas cortar, escribe *salir* y retomamos donde quedaste.`,
-  completa:
-    '¡Listo! ✅ Gracias por responder.\n\nCon esto ya podemos partir con tu curso: ' +
-    '*Nivel Inicial de Alfabetización ciudadana en Inteligencia Artificial*. ¿Comenzamos?',
+  // El nombre del curso se lee de la base, no se escribe acá: un nombre a mano es exactamente lo
+  // que quedó viejo cuando el currículo cambió.
+  //
+  // Y NO termina con "¿Comenzamos?". Un flujo determinista que cierra con una pregunta abierta deja
+  // que el modelo interprete la respuesta: en el piloto un "si" quedó suelto y el tutor lo resolvió
+  // contra una conversación anterior sobre el quiz, anunciando una pregunta que nadie iba a enviar.
+  // El cierre entrega un botón, cuya respuesta no admite dos lecturas.
+  completa: (curso: string) =>
+    `¡Listo! ✅ Gracias por responder.\n\nYa quedaste inscrito en *${curso}*: son 8 microcápsulas ` +
+    `de 5 a 7 minutos y puedes hacerlas a tu ritmo.`,
   pausada: (hechas: number, total: number) =>
     `Sin problema, dejamos el cuestionario en la pregunta ${hechas + 1} de ${total} 🙂 ` +
     `Cuando quieras seguir, escribe *cuestionario*.`,
@@ -178,8 +186,16 @@ async function continuar(
   if (!p) {
     const completa = await cerrarSiCompleta(persona.id);
     if (completa) {
-      await provider.enviarTexto(waId, T.completa);
       void audit({ type: 'caracterizacion_completada', dialogId: waId, detail: { personId: persona.id } });
+      // Se inscribe ACÁ: acaba de responder once preguntas para entrar al curso, y volver a
+      // preguntarle si quiere entrar es fricción. El plan define esta secuencia — cuestionario,
+      // después la ruta.
+      const estado = await inscribir(persona.id);
+      const curso = estado?.curso?.nombre ?? (await cursoActivo())?.nombre ?? 'el curso';
+      if (estado?.inscrito) void audit({ type: 'inscripcion', dialogId: waId, detail: { curso: estado.curso?.codigo } });
+      await provider.enviarBotones(waId, T.completa(curso), [
+        { id: 'arranque:comenzar', titulo: 'Comenzar ahora' },
+      ]);
     }
     return { handled: true };
   }

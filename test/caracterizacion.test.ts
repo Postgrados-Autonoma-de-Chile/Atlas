@@ -28,6 +28,20 @@ const PREGUNTAS = [
 let respuestas = new Map<string, string>();
 let completadaEn: string | null = null;
 
+let inscripciones = 0;
+const CURSO = { id: 'c1', codigo: 'NIVEL-1-IA-PROBLEMAS', nombre: 'Nivel Inicial: Alfabetización ciudadana en Inteligencia Artificial', duracionMin: 55 };
+mock.module('../src/store/cursos.ts', {
+  namedExports: {
+    inscribir: async () => (inscripciones++, { inscrito: true, curso: CURSO, totalLecciones: 8, completadas: 0 }),
+    cursoActivo: async () => CURSO,
+    estadoAcademico: async () => ({ inscrito: true, curso: CURSO, totalLecciones: 8, completadas: 0 }),
+    entregarLeccionActual: async () => null,
+    completarLeccionActual: async () => null,
+    contextoAcademico: async () => '',
+    avancePrevioArchivado: async () => null,
+    frasePrevio: () => '',
+  },
+});
 mock.module('../src/store/db.ts', {
   namedExports: { dbEnabled: () => true, dbInsertAudit: async () => {}, getPool: () => null },
 });
@@ -58,7 +72,7 @@ function fakeProvider() {
     nombre: 'fake', configurado: () => true,
     enviarTexto: async (_t, texto) => (textos.push(texto), OK),
     enviarPlantilla: async () => OK,
-    enviarBotones: async (_t, cuerpo, bs) => (botones.push({ cuerpo, ids: bs.map((b) => b.id) }), OK),
+    enviarBotones: async (_t, cuerpo, bs) => (botones.push({ cuerpo, ids: bs.map((b) => b.id), titulos: bs.map((b) => b.titulo) }), OK),
     enviarLista: async (_t, cuerpo, _b, os) => (listas.push({ cuerpo, filas: os.map((o) => ({ id: o.id, titulo: o.titulo })) }), OK),
     enviarDocumento: async () => OK,
     marcarLeido: async () => OK,
@@ -115,9 +129,18 @@ test('caso 2 — al completarlo, se cierra y se ofrece iniciar la ruta', async (
   assert.equal(respuestas.size, 3, 'las tres respuestas quedaron guardadas');
   assert.equal(respuestas.get('q2'), 'q2o7', 'el número 7 corresponde a la séptima opción');
   assert.equal(completadaEn !== null, true, 'la caracterización queda marcada como completa');
-  assert.match(textos.at(-1)!, /ya podemos partir/i);
-  assert.equal(botones.length, 1, 'la pregunta de 2 opciones fue con botones');
+
+  // Se inscribe acá mismo: acaba de responder once preguntas para entrar al curso.
+  assert.equal(inscripciones, 1);
+  assert.match(botones.at(-1)!.cuerpo, /Ya quedaste inscrito/i);
+  assert.match(botones.at(-1)!.cuerpo, /Alfabetización ciudadana/, 'el nombre sale de la base, no del código');
+
+  // Y NO cierra con una pregunta abierta: un "si" suelto lo interpretaba el modelo contra la
+  // conversación anterior, y así prometió un quiz que nadie envió.
+  assert.doesNotMatch(botones.at(-1)!.cuerpo, /¿Comenzamos\?/);
+  assert.deepEqual(botones.at(-1)!.titulos, ['Comenzar ahora'], 'la respuesta no admite dos lecturas');
   assert.equal(listas.length, 1);
+  void textos;
 });
 
 test('completa, deja de interceptar: el turno sigue al tutor', async () => {
