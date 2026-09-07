@@ -12,7 +12,7 @@ import { kvKind, kvVivo, once } from './store/kv';
 import { verificarPorFolio } from './store/certificados';
 import { requireDashboardToken } from './routes/guard';
 import { panelCohorte } from './store/panel';
-import { panelCohorteHtml } from './obs/panelHtml';
+import { panelCohorteHtml, panelAccesoHtml } from './obs/panelHtml';
 import { rateLimit } from './routes/rateLimit';
 import { planificar, despachar } from './reminders/motor';
 import { messagingProvider } from './messaging';
@@ -131,12 +131,24 @@ app.get('/metrics', requireDashboardToken, async (_req, res) => {
 //
 // Se pide con curl/Invoke-WebRequest y se guarda en disco:
 //   curl -H "x-dashboard-token: TOKEN" https://.../panel/cohorte -o cohorte.html
-app.get('/panel/cohorte', requireDashboardToken, async (_req, res) => {
+// Página de acceso: pública y SIN datos. Existe porque un navegador no puede enviar un header
+// escribiendo una URL, y aceptar el token por query string es lo que este proyecto ya descartó —
+// queda en logs de proxies, en el historial y en el Referer. Acá el token se escribe, vive en
+// sessionStorage y viaja por fetch en el header.
+app.get('/panel', strictLimiter, (_req, res) => {
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  res.setHeader('Cache-Control', 'no-store');
+  res.type('html').send(panelAccesoHtml(config.panelRefrescoSeg));
+});
+
+// Los datos. El limitador estricto va además del token: es el único endpoint con PII donde alguien
+// podría intentar adivinar el secreto a fuerza de peticiones.
+app.get('/panel/cohorte', strictLimiter, requireDashboardToken, async (req, res) => {
   const r = await panelCohorte(config.auditRetentionDays);
   res.setHeader('X-Robots-Tag', 'noindex, nofollow');
   res.setHeader('Cache-Control', 'no-store');
   if (!r) return res.status(503).send('<!doctype html><meta charset="utf-8">Base de datos no disponible.');
-  res.type('html').send(panelCohorteHtml(r));
+  res.type('html').send(panelCohorteHtml(r, req.query.vista === 'fragmento'));
 });
 
 // Webhook de WhatsApp Cloud API: GET = handshake de verificación (Meta lo llama al suscribir);

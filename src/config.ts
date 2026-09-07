@@ -88,6 +88,8 @@ const Env = z.object({
 
   // ── Memoria conversacional (la académica vive en Postgres, F3-4) ──
   MEMORY_TTL_HOURS: z.coerce.number().int().positive().default(48),
+  /** Cada cuánto se refresca solo el panel de cohorte, en segundos. */
+  PANEL_REFRESCO_SEG: z.coerce.number().int().min(10).max(3600).default(60),
   MEMORY_MAX_TURNS: z.coerce.number().int().positive().default(24),
 
   // ── Pub/Sub (F11: split webhook/worker). Vacío = despacho in-process (dev / piloto 1 servicio) ──
@@ -222,6 +224,7 @@ export const config = {
   maxConcurrentTurns: env.MAX_CONCURRENT_TURNS,
 
   memoryTtlHours: env.MEMORY_TTL_HOURS,
+  panelRefrescoSeg: env.PANEL_REFRESCO_SEG,
   memoryMaxTurns: env.MEMORY_MAX_TURNS,
 
   pubsubTopic: env.PUBSUB_TOPIC,

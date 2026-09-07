@@ -24,7 +24,7 @@ mock.module('../src/store/db.ts', {
 });
 
 const { panelCohorte } = await import('../src/store/panel');
-const { panelCohorteHtml } = await import('../src/obs/panelHtml');
+const { panelCohorteHtml, panelAccesoHtml } = await import('../src/obs/panelHtml');
 
 const FILA = {
   id: 'p1', nombre: 'Rodrigo', apellido: 'Palma', created_at: HACE(6),
@@ -127,4 +127,49 @@ test('sin contenciones, el panel no muestra el bloque rojo', async () => {
   filas = [FILA];
   const html = panelCohorteHtml((await panelCohorte(90))!);
   assert.doesNotMatch(html, /contención/);
+});
+
+// ── Página de acceso ───────────────────────────────────────────────────────
+
+test('la página de acceso no lleva un solo dato de nadie', async () => {
+  // Es pública: si alguien la abre sin token, no puede ver nada. Por eso no consulta la base.
+  const html = panelAccesoHtml(60);
+  assert.doesNotMatch(html, /\+569/, 'ningún teléfono');
+  assert.doesNotMatch(html, /Rodrigo|Palma/, 'ningún nombre');
+  assert.match(html, /type="password"/, 'el token no se muestra al tipearlo');
+  assert.match(html, /noindex/);
+});
+
+test('el token viaja por header y nunca por la URL', async () => {
+  // La salida fácil —aceptarlo por query string— es la que este proyecto ya descartó: queda en los
+  // logs de los proxies, en el historial y en el Referer.
+  const html = panelAccesoHtml(60);
+  assert.match(html, /'x-dashboard-token':tk/);
+  assert.doesNotMatch(html, /[?&]token=/, 'nunca en la query string');
+  assert.match(html, /sessionStorage/, 'muere al cerrar la pestaña');
+  assert.doesNotMatch(html, /localStorage/, 'no sobrevive al cierre del navegador');
+});
+
+test('un 401 vuelve a pedir el token en vez de dejar la vista colgada', async () => {
+  const html = panelAccesoHtml(60);
+  assert.match(html, /r\.status===401/);
+  assert.match(html, /no es válido/);
+  assert.match(html, /removeItem/, 'y descarta el token guardado');
+});
+
+test('el refresco automático es configurable y va en la página', async () => {
+  assert.match(panelAccesoHtml(30), /REFRESCO=30\*1000/);
+  assert.match(panelAccesoHtml(120), /REFRESCO=120\*1000/);
+});
+
+test('el modo fragmento no trae envoltorio de documento, y el completo sí', async () => {
+  // Un solo render para los dos: mantener dos versiones de la tabla garantiza que se separen.
+  filas = [FILA];
+  const r = (await panelCohorte(90))!;
+  const frag = panelCohorteHtml(r, true);
+  assert.doesNotMatch(frag, /<!doctype|<style>/i);
+  assert.match(frag, /Rodrigo Palma/, 'pero sí el contenido');
+  const completo = panelCohorteHtml(r);
+  assert.match(completo, /<!doctype/i);
+  assert.match(completo, /<style>/);
 });
