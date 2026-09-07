@@ -45,6 +45,9 @@ mock.module('../src/store/caracterizacion.ts', {
 });
 mock.module('../src/store/cursos.ts', {
   namedExports: {
+    // El mock reemplaza el módulo COMPLETO: sin estos dos, el toolRunner no resuelve sus imports.
+    avancePrevioArchivado: async () => null,
+    frasePrevio: () => '',
     cursoActivo: async () => ESTADO.curso,
     inscribir: async () => (inscripciones++, ESTADO),
     estadoAcademico: async () => ESTADO,

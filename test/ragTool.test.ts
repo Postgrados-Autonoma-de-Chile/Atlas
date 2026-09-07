@@ -20,6 +20,9 @@ mock.module('../src/rag/retrieval.ts', {
 });
 mock.module('../src/store/cursos.ts', {
   namedExports: {
+    // El mock reemplaza el módulo COMPLETO: sin estos dos, el toolRunner no resuelve sus imports.
+    avancePrevioArchivado: async () => null,
+    frasePrevio: () => '',
     cursoActivo: async () => ({ id: 'c1', codigo: 'NIVEL-INICIAL-P1', nombre: 'IA en la vida cotidiana', descripcion: '', duracionMin: 58 }),
     inscribir: async () => null,
     estadoAcademico: async () => ({ inscrito: false }),

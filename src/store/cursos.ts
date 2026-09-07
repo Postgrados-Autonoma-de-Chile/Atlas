@@ -270,6 +270,76 @@ export async function completarLeccionActual(
   }
 }
 
+/**
+ * Cómo se le cuenta a la persona que su avance anterior no se traslada.
+ *
+ * La instrucción viaja con el dato, no en el prompt del sistema: así el tutor la recibe solo cuando
+ * corresponde y no gasta tokens en cada turno de los demás.
+ */
+export function frasePrevio(p: AvancePrevio): string {
+  const hecho = p.folio
+    ? `ya había COMPLETADO la versión anterior del programa ("${p.curso}") y tiene su certificado ${p.folio}, que sigue siendo válido`
+    : `ya había avanzado ${p.completadas} de ${p.total} microcápsulas en la versión anterior del programa ("${p.curso}")`;
+  return (
+    `CONTEXTO IMPORTANTE: ${hecho}. El programa se actualizó al plan curricular oficial y esta ` +
+    `versión tiene otras microcápsulas, así que ese avance NO se traslada y parte de nuevo. ` +
+    `Reconócelo en UNA frase, con naturalidad, antes de ofrecerle inscribirse: no lo presentes como ` +
+    `un error ni como una pérdida, no te disculpes de más, y NO prometas recuperar ese avance ni ` +
+    `saltarse microcápsulas por haberlas hecho antes.`
+  );
+}
+
+export type AvancePrevio = {
+  curso: string;
+  completadas: number;
+  total: number;
+  /** Folio si alcanzó a certificarse en esa versión. El certificado sigue siendo válido. */
+  folio: string | null;
+};
+
+/**
+ * Avance que la persona alcanzó en una versión ANTERIOR del programa, ya archivada.
+ *
+ * Cuando el currículo se actualiza, los cursos anteriores se archivan y `estadoAcademico` —que solo
+ * mira el curso activo— empieza a devolver `inscrito: false`. Sin este dato, alguien que había
+ * completado tres microcápsulas recibe la bienvenida de un estudiante nuevo, como si su trabajo no
+ * hubiera existido.
+ *
+ * NO devuelve ese avance para trasladarlo: las microcápsulas de una versión y otra no se
+ * corresponden, y darlas por equivalentes falsearía la evidencia. Es solo para poder reconocerlo.
+ *
+ * Devuelve null cuando no hay nada que reconocer: sin microcápsulas completadas y sin certificado,
+ * mencionar una inscripción previa sería ruido.
+ */
+export async function avancePrevioArchivado(personId: string): Promise<AvancePrevio | null> {
+  const pool = getPool();
+  if (!pool) return null;
+  try {
+    const r = await pool.query(
+      `SELECT c.nombre,
+              (SELECT count(*)::int FROM lesson l JOIN module m ON m.id = l.module_id
+                WHERE m.course_id = c.id) AS total,
+              (SELECT count(*)::int FROM lesson_progress lp
+                WHERE lp.enrollment_id = e.id AND lp.estado = 'completada') AS completadas,
+              ct.folio
+         FROM enrollment e
+         JOIN course c ON c.id = e.course_id
+         LEFT JOIN certificate ct ON ct.enrollment_id = e.id AND ct.folio IS NOT NULL
+        WHERE e.person_id = $1 AND c.estado <> 'activo'
+        ORDER BY completadas DESC, e.iniciado_en DESC
+        LIMIT 1`,
+      [personId],
+    );
+    const row = r.rows[0];
+    if (!row) return null;
+    if (!row.completadas && !row.folio) return null;
+    return { curso: row.nombre, completadas: row.completadas, total: row.total, folio: row.folio ?? null };
+  } catch (e) {
+    log.warn('cursos: avancePrevioArchivado falló', { err: String(e) });
+    return null;
+  }
+}
+
 /** Contexto académico compacto para rehidratar al tutor al abrir conversación (sin PII sensible). */
 export async function contextoAcademico(personId: string, nombre: string | null): Promise<string> {
   const estado = await estadoAcademico(personId);
@@ -277,9 +347,10 @@ export async function contextoAcademico(personId: string, nombre: string | null)
   if (!estado) return quien;
   if (!estado.inscrito) {
     const curso = await cursoActivo();
-    return curso
-      ? `${quien} Aún NO está inscrito en el curso disponible ("${curso.nombre}", ${curso.duracionMin} min en microcápsulas). Ofrécele inscribirse con la tool inscribirme_al_curso.`
-      : `${quien} No hay cursos disponibles por ahora.`;
+    if (!curso) return `${quien} No hay cursos disponibles por ahora.`;
+    const previo = await avancePrevioArchivado(personId);
+    const base = `${quien} Aún NO está inscrito en el curso disponible ("${curso.nombre}", ${curso.duracionMin} min en microcápsulas). Ofrécele inscribirse con la tool inscribirme_al_curso.`;
+    return previo ? `${base} ${frasePrevio(previo)}` : base;
   }
   const { curso, enrollment, completadas, totalLecciones, proxima } = estado;
   if (enrollment!.estado === 'completada') {

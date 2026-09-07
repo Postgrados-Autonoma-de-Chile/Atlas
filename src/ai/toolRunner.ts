@@ -1,6 +1,7 @@
 import type { AgentContext } from '../core/channel';
 import { buscarPersonaPorWaId } from '../store/personas';
-import { inscribir, estadoAcademico, entregarLeccionActual, completarLeccionActual, cursoActivo } from '../store/cursos';
+import { inscribir, estadoAcademico, entregarLeccionActual, completarLeccionActual, cursoActivo,
+  avancePrevioArchivado, frasePrevio } from '../store/cursos';
 import { quizDeLeccion, quizzesPendientes } from '../store/evaluaciones';
 import { estaCompleta, respondidas, totalPreguntas } from '../store/caracterizacion';
 import { marcarQuizPendiente } from '../flows/evaluacion';
@@ -62,6 +63,27 @@ async function practicaPendiente(personId: string): Promise<Record<string, unkno
   };
 }
 
+/**
+ * Avance en una version anterior del programa, si hay algo que reconocer.
+ *
+ * Va en el resultado de las tools y no solo en la rehidratacion porque la rehidratacion se inyecta
+ * unicamente cuando la memoria de la conversacion esta vacia: quien ya venia conversando no la
+ * recibiria, y es justamente esa persona la que estaba a medio camino.
+ */
+async function reconocerAvancePrevio(personId: string): Promise<Record<string, unknown>> {
+  const previo = await avancePrevioArchivado(personId);
+  if (!previo) return {};
+  return {
+    versionAnterior: {
+      curso: previo.curso,
+      completadas: previo.completadas,
+      total: previo.total,
+      certificado: previo.folio,
+    },
+    instruccionVersionAnterior: frasePrevio(previo),
+  };
+}
+
 export async function executeTool(name: string, _input: unknown, ctx?: AgentContext): Promise<unknown> {
   try {
     switch (name) {
@@ -87,14 +109,23 @@ export async function executeTool(name: string, _input: unknown, ctx?: AgentCont
         if (!estado) return { ok: false, error: 'bd_no_disponible' };
         if (!estado.inscrito) return { ok: false, error: 'sin_curso_activo' };
         void audit({ type: 'inscripcion', dialogId: ctx.conversationId, detail: { curso: estado.curso?.codigo } });
-        return { ok: true, curso: estado.curso?.nombre, totalMicrocapsulas: estado.totalLecciones, primera: estado.proxima };
+        return {
+          ok: true, curso: estado.curso?.nombre, totalMicrocapsulas: estado.totalLecciones,
+          primera: estado.proxima,
+          ...(await reconocerAvancePrevio(ctx.personId)),
+        };
       }
 
       case 'consultar_progreso': {
         if (!ctx?.personId) return NO_REGISTRADO;
         const estado = await estadoAcademico(ctx.personId);
         if (!estado) return { ok: false, error: 'bd_no_disponible' };
-        if (!estado.inscrito) return { ok: true, inscrito: false, mensaje: 'No está inscrito aún; ofrécele inscribirse.' };
+        if (!estado.inscrito) {
+          return {
+            ok: true, inscrito: false, mensaje: 'No está inscrito aún; ofrécele inscribirse.',
+            ...(await reconocerAvancePrevio(ctx.personId)),
+          };
+        }
         return {
           ok: true,
           inscrito: true,
@@ -122,6 +153,7 @@ export async function executeTool(name: string, _input: unknown, ctx?: AgentCont
             error: 'sin_leccion_pendiente',
             mensaje: 'No hay lección pendiente: o no está inscrito, o ya completó el curso (consulta el progreso).',
             ...(await practicaPendiente(ctx.personId)),
+            ...(await reconocerAvancePrevio(ctx.personId)),
           };
         }
         void audit({ type: 'leccion_entregada', dialogId: ctx?.conversationId, detail: { orden: entrega.leccion.orden } });

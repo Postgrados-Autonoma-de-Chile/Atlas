@@ -13,6 +13,8 @@ const LECCIONES = [
   { orden: 2, titulo: 'IA en el celular, redes sociales y aplicaciones', duracionMin: 6 },
   { orden: 3, titulo: 'Actividad de cierre', duracionMin: 10 },
 ];
+/** Avance en una versión archivada del programa, para el caso de quien venía cursando. */
+let previoSim: { curso: string; completadas: number; total: number; folio: string | null } | null = null;
 const sims = new Map<string, Sim>();
 const sim = (personId: string): Sim => {
   if (!sims.has(personId)) sims.set(personId, { inscrito: false, completadas: 0, minutos: 0, estado: 'activa' });
@@ -35,6 +37,9 @@ const estadoDe = (s: Sim) => ({
 
 mock.module('../src/store/cursos.ts', {
   namedExports: {
+    // El mock reemplaza el módulo COMPLETO: sin estos dos, el toolRunner no resuelve sus imports.
+    avancePrevioArchivado: async () => previoSim,
+    frasePrevio: (p: any) => `Ya había avanzado ${p.completadas} de ${p.total}. NO se traslada.`,
     cursoActivo: async () => ({ id: 'c1', codigo: 'NIVEL-INICIAL-P1', nombre: 'IA en la vida cotidiana', descripcion: '', duracionMin: 22 }),
     inscribir: async (personId: string) => ((sim(personId).inscrito = true), estadoDe(sim(personId))),
     estadoAcademico: async (personId: string) => estadoDe(sim(personId)),
@@ -130,4 +135,34 @@ test('consultar_progreso refleja el estado real tras avanzar', async () => {
   assert.equal(prog.total, 3);
   assert.equal(prog.minutosAcumulados, 6);
   assert.equal(prog.proxima.orden, 2);
+});
+
+test('quien venía de una versión anterior recibe el reconocimiento al inscribirse', async () => {
+  // Al cambiar al plan oficial, 13 personas quedaron colgando del curso archivado. Sin este dato,
+  // el tutor saluda como nueva a alguien que ya había hecho tres microcápsulas.
+  previoSim = { curso: 'IA en la vida cotidiana', completadas: 3, total: 9, folio: null };
+  const c = ctx('alumno-previo');
+  const ins: any = await executeTool('inscribirme_al_curso', {}, c);
+  assert.equal(ins.ok, true, 'se inscribe igual: el avance viejo no lo exime');
+  assert.deepEqual(ins.versionAnterior, { curso: 'IA en la vida cotidiana', completadas: 3, total: 9, certificado: null });
+  assert.match(String(ins.instruccionVersionAnterior), /NO se traslada/);
+
+  const prog: any = await executeTool('consultar_progreso', {}, c);
+  assert.equal(prog.completadas, 0, 'parte de cero en el curso nuevo');
+
+  previoSim = null;
+  const limpio: any = await executeTool('inscribirme_al_curso', {}, ctx('alumno-limpio'));
+  assert.equal('versionAnterior' in limpio, false, 'sin avance previo el campo no aparece');
+});
+
+test('el reconocimiento también llega por continuar_curso, no solo al inscribirse', async () => {
+  // Quien venía cursando escribe "continuar", no "inscríbeme": es el camino más probable, y la
+  // rehidratación no lo cubre porque solo se inyecta con la memoria vacía.
+  previoSim = { curso: 'IA en la vida cotidiana', completadas: 9, total: 9, folio: 'ATLAS-2026-0002' };
+  const c = ctx('alumno-certificado');
+  const r: any = await executeTool('continuar_curso', {}, c);
+  assert.equal(r.ok, false);
+  assert.equal(r.error, 'sin_leccion_pendiente');
+  assert.equal(r.versionAnterior.certificado, 'ATLAS-2026-0002');
+  previoSim = null;
 });
