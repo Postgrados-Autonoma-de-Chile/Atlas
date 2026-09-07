@@ -9,8 +9,14 @@
 # conector (socket /cloudsql/...): sin IP pública autorizada, sin túnel y con la misma identidad y
 # el mismo secreto que usa el servicio.
 FROM node:22-slim
-ENV NODE_ENV=production
 WORKDIR /app
+
+# NODE_ENV a propósito SIN 'production'. Esta imagen no es el servicio: es un contenedor de
+# mantenimiento que solo habla con la base. Con NODE_ENV=production, src/config exige las nueve
+# variables del servicio y no arranca —fail-fast correcto para el webhook, absurdo para migrar— y
+# satisfacerlo obligaría a entregarle a un job batch el token de WhatsApp y la clave de cifrado de
+# PII, que no necesita. Cada job recibe solo los secretos de su tarea.
+ENV NODE_ENV=maintenance
 
 # Las dependencias completas: node-pg-migrate es devDependency y acá SÍ se necesita.
 COPY package.json package-lock.json ./
@@ -20,6 +26,13 @@ COPY migrations ./migrations
 COPY curriculo ./curriculo
 COPY scripts/cargar-curriculo.mjs ./scripts/cargar-curriculo.mjs
 COPY scripts/reporte-cohorte.mjs ./scripts/reporte-cohorte.mjs
+
+# La ingesta al RAG sí necesita el código: reutiliza el chunker y el cliente de embeddings del
+# servicio en vez de duplicarlos, que es lo que hay que evitar en un corpus que debe quedar
+# indexado igual que lo que el tutor busca.
+COPY tsconfig.json ./
+COPY src ./src
+COPY scripts/ingerir-contenido.ts ./scripts/ingerir-contenido.ts
 
 USER node
 # Por omisión, migrar. El job del currículo sobreescribe el comando.

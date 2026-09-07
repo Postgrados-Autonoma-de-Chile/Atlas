@@ -1,6 +1,11 @@
 // Ingesta de contenido al RAG (Fase 5). Requiere DATABASE_URL (migrado) y GEMINI_API_KEY.
 //
 // Modos:
+//   npx tsx scripts/ingerir-contenido.ts contenido [CODIGO]
+//     → Indexa el MATERIAL de estudio del plan oficial: un item por microcápsula desde
+//       curriculo/contenido-nivel1.json (contenido pantalla por pantalla, guiones y criterios).
+//       Es el corpus real; los otros dos modos quedan como complemento.
+//
 //   npx tsx scripts/ingerir-contenido.ts descripciones [CODIGO]
 //     → Indexa el título+descripción oficial de cada microcápsula del curso (corpus mínimo:
 //       el RAG responde desde hoy, mientras llegan las transcripciones). CODIGO default: curso activo.
@@ -135,10 +140,62 @@ async function modoTranscripcion(codigo: string, ordenStr: string, archivo: stri
   console.log(`✔ ${fuente}: ${chunks.length} chunks indexados (${texto.length} chars).`);
 }
 
+/**
+ * Indexa el material de estudio del currículo oficial: un item por microcápsula, desde
+ * curriculo/contenido-nivel1.json (que arma scripts/construir-contenido.py a partir de los
+ * documentos del plan).
+ *
+ * Es el corpus que el modo `descripciones` no puede dar: ese indexa título + descripción, unas
+ * pocas líneas por cápsula. Acá va el contenido pantalla por pantalla, los guiones y el criterio
+ * de cada práctica — lo que un estudiante realmente pregunta.
+ *
+ * Empareja por ORDEN de la microcápsula, no por título: los títulos se pueden ajustar en el
+ * material y el orden es lo que el plan fija.
+ */
+async function modoContenidoCurricular(codigo?: string) {
+  const ruta = new URL('../curriculo/contenido-nivel1.json', import.meta.url);
+  const doc = JSON.parse(readFileSync(ruta, 'utf8')) as {
+    version: string; curso: string;
+    microcapsulas: { orden: number; titulo: string; texto: string }[];
+  };
+  const curso = await cursoPorCodigo(codigo ?? doc.curso);
+  const lecciones = await getPool()!.query(
+    `SELECT l.id, l.orden, l.titulo FROM lesson l JOIN module m ON m.id=l.module_id
+     WHERE m.course_id=$1 ORDER BY m.orden, l.orden`,
+    [curso.id],
+  );
+  const porOrden = new Map<number, { id: string; orden: number; titulo: string }>(
+    lecciones.rows.map((l: any) => [l.orden, l]),
+  );
+
+  let indexadas = 0, omitidas = 0, chunksTotal = 0;
+  for (const m of doc.microcapsulas) {
+    const l = porOrden.get(m.orden);
+    if (!l) {
+      console.warn(`⚠ la microcápsula ${m.orden} no existe en ${curso.codigo}: se omite`);
+      continue;
+    }
+    const fuente = `Microcápsula ${l.orden}: ${l.titulo}`;
+    const item = await upsertItem(l.id, 'material', `Material de la microcápsula ${l.orden}`, m.texto);
+    if (item.sinCambios) { omitidas++; continue; }
+    const chunks = chunkTexto(m.texto);
+    await reemplazarChunks(item.id, l.id, curso.id, fuente, chunks);
+    await marcarIngerido(item.id, item.h);
+    indexadas++;
+    chunksTotal += chunks.length;
+    console.log(`✔ ${fuente}: ${chunks.length} chunks (${m.texto.length} chars)`);
+  }
+  console.log(
+    `Listo: ${indexadas} microcápsulas indexadas (${chunksTotal} chunks), ${omitidas} sin cambios ` +
+    `— curso ${curso.codigo}, currículo ${doc.version}.`,
+  );
+}
+
 async function main() {
   const [modo, a, b, c] = process.argv.slice(2);
   await initDb();
   if (!getPool()) throw new Error('Sin DATABASE_URL o esquema sin migrar (npm run migrate).');
+  if (modo === 'contenido') return modoContenidoCurricular(a);
   if (modo === 'descripciones') return modoDescripciones(a);
   if (modo === 'transcripcion') {
     if (!a || !b || !c) throw new Error('Uso: transcripcion <CODIGO> <ORDEN_LECCION> <archivo>');

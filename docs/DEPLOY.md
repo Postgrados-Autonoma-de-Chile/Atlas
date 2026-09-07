@@ -70,7 +70,7 @@ hay una imagen aparte ([`Dockerfile.tareas`](../Dockerfile.tareas)) que corre co
 proyecto, hablando con Cloud SQL por el conector: sin IP pública autorizada y con el mismo secreto
 que usa el servicio.
 
-Tres jobs, todos re-ejecutables. En PowerShell el continuador es `` ` `` y **`"$IMG:v2"` no
+Cuatro jobs, todos re-ejecutables. En PowerShell el continuador es `` ` `` y **`"$IMG:v2"` no
 funciona**: PowerShell lee `$IMG:` como variable con ámbito y manda el argumento vacío. Usar
 `"${IMG}:v2"`.
 
@@ -81,19 +81,23 @@ SQL=postgrados-ua:us-east1:atlas-demo
 COMUN="--region us-east1 --service-account $SA --set-cloudsql-instances $SQL \
        --set-secrets DATABASE_URL=atlas-database-url:latest --max-retries 0 --task-timeout 10m"
 
-gcloud builds submit --config cloudbuild.tareas.yaml --substitutions=_TAG=v2
+gcloud builds submit --config cloudbuild.tareas.yaml --substitutions=_TAG=v4
 
 # Job 1 — migraciones (es el CMD por omisión de la imagen)
-gcloud run jobs create atlas-migrar --image $IMG:v2 $COMUN
+gcloud run jobs create atlas-migrar --image $IMG:v4 $COMUN
 gcloud run jobs execute atlas-migrar --region us-east1 --wait
 
 # Job 2 — carga del currículo (idempotente; con --dry-run simula y hace rollback)
-gcloud run jobs create atlas-curriculo --image $IMG:v2 $COMUN \
+gcloud run jobs create atlas-curriculo --image $IMG:v4 $COMUN \
   --command node --args="scripts/cargar-curriculo.mjs,--archivar-otros"
 gcloud run jobs execute atlas-curriculo --region us-east1 --wait
 
-# Job 3 — reporte de la cohorte (solo lectura, sin datos personales)
-gcloud run jobs create atlas-reporte --image $IMG:v2 $COMUN \
+# Job 3 — ingesta del material al RAG (necesita ademas GEMINI_API_KEY)
+gcloud run jobs create atlas-rag --image $IMG:v4 $COMUN   --set-secrets DATABASE_URL=atlas-database-url:latest,GEMINI_API_KEY=atlas-gemini-api-key:latest   --command npx --args="tsx,scripts/ingerir-contenido.ts,contenido"
+gcloud run jobs execute atlas-rag --region us-east1 --wait
+
+# Job 4 — reporte de la cohorte (solo lectura, sin datos personales)
+gcloud run jobs create atlas-reporte --image $IMG:v4 $COMUN \
   --command node --args="scripts/reporte-cohorte.mjs"
 gcloud run jobs execute atlas-reporte --region us-east1 --wait
 
@@ -107,7 +111,12 @@ gcloud run jobs executions logs read \
 columnas que la migración crea, así que desplegarlo antes deja el curso caído; y cargar el currículo
 antes del deploy hace que el código viejo sirva contenidos que no sabe interpretar.
 
-**Antes del job 2, correr el job 3.** Cargar el currículo **archiva** los cursos anteriores, y
+**Cargar el currículo NO indexa nada al RAG.** El job 2 escribe el curso, las lecciones y las
+interacciones; el material que el tutor busca vive en `content_chunk` y lo escribe el job 3. Si se
+omite, `buscar_contenido_curso` devuelve `encontrado: false` y el tutor responde —correctamente,
+según el prompt— que el material no cubre la pregunta. **Los jobs 2 y 3 van juntos, siempre.**
+
+**Antes del job 2, correr el job 4.** Cargar el currículo **archiva** los cursos anteriores, y
 `estadoAcademico` solo mira el curso activo: quien esté a medio camino en un curso archivado queda
 como *no inscrito* y arrancaría de cero en el nuevo (su avance queda en la base, pero inaccesible).
 Con una cohorte en curso eso es una decisión sobre personas, no sobre esquema — el reporte dice a

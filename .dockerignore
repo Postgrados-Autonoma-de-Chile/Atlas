@@ -8,6 +8,7 @@ test
 scripts
 !scripts/cargar-curriculo.mjs
 !scripts/reporte-cohorte.mjs
+!scripts/ingerir-contenido.ts
 docs
 *.md
 .github
