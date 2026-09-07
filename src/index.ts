@@ -11,6 +11,8 @@ import { dbResumenNegocio } from './store/metricasNegocio';
 import { kvKind, kvVivo, once } from './store/kv';
 import { verificarPorFolio } from './store/certificados';
 import { requireDashboardToken } from './routes/guard';
+import { panelCohorte } from './store/panel';
+import { panelCohorteHtml } from './obs/panelHtml';
 import { rateLimit } from './routes/rateLimit';
 import { planificar, despachar } from './reminders/motor';
 import { messagingProvider } from './messaging';
@@ -118,6 +120,23 @@ app.get('/metrics', requireDashboardToken, async (_req, res) => {
     costoLlmUsd: costoEstimadoUsd(s.counters, config.preciosLlm),
     negocio,
   });
+});
+
+// Panel operativo de la cohorte: quién está, cuánto conversó y cuándo. Detrás del MISMO guard que
+// /metrics, cuyo comentario ya anticipaba "los futuros paneles de tutoría".
+//
+// Lleva nombre y teléfono de personas reales, así que: token por header (nunca por query string, que
+// queda en logs de proxies y en el Referer), noindex, y ninguna ruta pública que lleve acá. El
+// correo y el RUT NO se consultan: van cifrados y el panel no los necesita.
+//
+// Se pide con curl/Invoke-WebRequest y se guarda en disco:
+//   curl -H "x-dashboard-token: TOKEN" https://.../panel/cohorte -o cohorte.html
+app.get('/panel/cohorte', requireDashboardToken, async (_req, res) => {
+  const r = await panelCohorte(config.auditRetentionDays);
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  res.setHeader('Cache-Control', 'no-store');
+  if (!r) return res.status(503).send('<!doctype html><meta charset="utf-8">Base de datos no disponible.');
+  res.type('html').send(panelCohorteHtml(r));
 });
 
 // Webhook de WhatsApp Cloud API: GET = handshake de verificación (Meta lo llama al suscribir);
