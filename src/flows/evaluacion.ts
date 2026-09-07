@@ -124,9 +124,11 @@ export function mapearRespuestaAOpcion(msg: InboundMessage, pregunta: PreguntaCo
  * consigna general ya se envió al abrir la actividad, así que repetirla en cada ítem sería ruido.
  */
 async function enviarPregunta(waId: string, provider: MessagingProvider, p: PreguntaConOpciones, pos: string): Promise<void> {
+  // Con un solo ítem, "Pregunta 1 de 1" es ruido: se omite el contador.
+  const unico = pos === '1 de 1';
   const cuerpo = p.tipo === 'clasificacion'
-    ? `*${pos}* · ¿Dónde ubicarías esto?\n\n“${p.itemTexto ?? p.enunciado}”`
-    : `*Pregunta ${pos}*\n${p.enunciado}`;
+    ? `*${unico ? '' : `${pos} · `}¿Dónde ubicarías esto?*\n\n“${p.itemTexto ?? p.enunciado}”`
+    : `*Pregunta${unico ? '' : ` ${pos}`}*\n${p.enunciado}`;
 
   // Botones solo si TODAS las opciones caben enteras: el título de un botón de WhatsApp admite 20
   // caracteres, y una categoría como "fuente/persona competente" quedaría cortada en "fuente/persona
@@ -187,7 +189,15 @@ export async function manejarEvaluacion(
     }
     const optionId = mapearRespuestaAOpcion(msg, estado.pregunta);
     if (!optionId) {
-      await provider.enviarTexto(waId, `Estamos en la pregunta ${estado.pregunta.orden} de ${estado.total} 🙂 Responde con los botones (o con la letra de la alternativa). Si prefieres seguir después, escribe *salir*.`);
+      // La afordancia real depende de cuántas opciones haya y de cuánto midan: prometer "botones"
+      // cuando llegó una lista manda a la persona a buscar algo que no está en su pantalla.
+      const conBotones = estado.pregunta.opciones.length <= 3
+        && estado.pregunta.opciones.every((o) => o.texto.length <= 20);
+      const donde = conBotones ? 'con los botones' : 'tocando *Responder*';
+      const cual = estado.total > 1
+        ? `en la pregunta ${estado.pregunta.orden} de ${estado.total}`
+        : 'en la práctica';
+      await provider.enviarTexto(waId, `Estamos ${cual} 🙂 Responde ${donde}, o escribiendo la letra de la alternativa. Si prefieres seguir después, escribe *salir*.`);
       await enviarPregunta(waId, provider, estado.pregunta, `${estado.pregunta.orden} de ${estado.total}`);
       return { handled: true };
     }

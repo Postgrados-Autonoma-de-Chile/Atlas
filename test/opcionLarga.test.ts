@@ -142,3 +142,14 @@ test('con dos opciones cortas siguen siendo botones', async () => {
   assert.equal(listas.length, 0);
   assert.deepEqual(botones[0].titulos, ['Verdadero', 'Falso']);
 });
+
+test('con un solo ítem no se numera la pregunta', async () => {
+  // "Pregunta 1 de 1" es ruido, y en la microcápsula 1 la práctica es exactamente una.
+  opciones = [
+    { id: 'o1', orden: 1, texto: LARGA, esCorrecta: true },
+    { id: 'o2', orden: 2, texto: 'Decidir cuánto dinero debería gastar.', esCorrecta: false },
+  ];
+  const { listas } = await enviar();
+  assert.doesNotMatch(listas[0].cuerpo, /1 de 1/);
+  assert.match(listas[0].cuerpo, /\*Pregunta\*/);
+});

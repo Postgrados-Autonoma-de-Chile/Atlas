@@ -145,8 +145,14 @@ export async function entregarLeccionActual(personId: string): Promise<{ leccion
        ON CONFLICT ON CONSTRAINT lesson_progress_unico DO NOTHING`,
       [estado.enrollment.id, l.id],
     );
+    // Solo materiales CON enlace. El corpus del RAG se guarda como content_item de tipo
+    // 'material' y sin url —es texto para buscar, no un recurso que se abra—, así que sin este
+    // filtro aparecía en la lista de materiales de la lección y el tutor invitaba a "revisar el
+    // material" señalando algo que el estudiante no puede abrir en ninguna parte.
     const mats = await pool.query(
-      `SELECT tipo, titulo, url FROM content_item WHERE lesson_id = $1 AND tipo IN ('video','documento','material') ORDER BY created_at`,
+      `SELECT tipo, titulo, url FROM content_item
+        WHERE lesson_id = $1 AND tipo IN ('video','documento','material') AND url IS NOT NULL
+        ORDER BY created_at`,
       [l.id],
     );
     return {

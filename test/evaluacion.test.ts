@@ -311,3 +311,18 @@ test('si hay práctica pendiente y no se pudo abrir, lo llama falla técnica y n
   hayQuizSim = true;
   pendientesSim = 0;
 });
+
+test('la re-guía no promete botones cuando la actividad llegó como lista', async () => {
+  // Decirle "responde con los botones" a quien tiene una lista en pantalla lo manda a buscar algo
+  // que no está ahí. P1 tiene cuatro opciones largas: va como lista.
+  hayQuizSim = true;
+  pendientesSim = 0;
+  const { p, textos } = fakeProvider();
+  const from = '+56900060001';
+  await manejarEvaluacion(texto(from, 'quiz'), PERSONA as any, p);
+  await manejarEvaluacion(texto(from, 'no sé, explícame'), PERSONA as any, p);
+  const reguia = textos.find((t) => /Estamos/.test(t))!;
+  assert.match(reguia, /tocando \*Responder\*/);
+  assert.doesNotMatch(reguia, /con los botones/);
+  assert.match(reguia, /pregunta 1 de 2/, 'y sí dice dónde va, porque son dos');
+});
