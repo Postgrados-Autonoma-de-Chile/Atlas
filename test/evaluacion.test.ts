@@ -25,14 +25,31 @@ const P2 = {
 type Att = { respuestas: { qid: string; ok: boolean; tiempoMs: number | null }[]; intentoN: number };
 const attempts = new Map<string, Att>();
 let proximoIntento = 1;
+/** Estado simulado para el caso "pidió práctica y no hay ninguna". */
+let pendientesSim = 0;
+let hayQuizSim = true;
+let estadoSim: any = { inscrito: true, completadas: 1, totalLecciones: 8 };
 
+mock.module('../src/store/cursos.ts', {
+  namedExports: {
+    estadoAcademico: async () => estadoSim,
+    cursoActivo: async () => null,
+    inscribir: async () => null,
+    entregarLeccionActual: async () => null,
+    completarLeccionActual: async () => null,
+    contextoAcademico: async () => '',
+    avancePrevioArchivado: async () => null,
+    frasePrevio: () => '',
+  },
+});
 mock.module('../src/store/db.ts', {
   namedExports: { dbEnabled: () => true, dbInsertAudit: async () => {}, getPool: () => null },
 });
 mock.module('../src/store/evaluaciones.ts', {
   namedExports: {
     quizDeLeccion: async () => ({ id: 'quiz1', titulo: 'Mini-quiz — Microcápsula 1' }),
-    quizParaIniciar: async () => ({ quizId: 'quiz1', titulo: 'Mini-quiz — Microcápsula 1', enrollmentId: 'e1' }),
+    quizzesPendientes: async () => pendientesSim,
+    quizParaIniciar: async () => (hayQuizSim ? { quizId: 'quiz1', titulo: 'Mini-quiz — Microcápsula 1', enrollmentId: 'e1' } : null),
     iniciarAttempt: async () => {
       const attemptId = 'a' + proximoIntento;
       attempts.set(attemptId, { respuestas: [], intentoN: proximoIntento });
@@ -243,4 +260,54 @@ test('sin persona o sin BD: el flujo no intercepta', async () => {
   const { p } = fakeProvider();
   const r = await manejarEvaluacion(texto('+56900040004', 'quiz'), null, p);
   assert.equal(r.handled, false);
+});
+
+// ── Pedir práctica cuando no hay ninguna ───────────────────────────────────
+// El caso del piloto: un estudiante registrado y SIN inscripción escribió "quiz". El flujo
+// devolvía handled:false, el mensaje llegaba al tutor, y el tutor —que por prompt sabe que "el
+// sistema envía la práctica"— le anunció una que nunca llegó.
+
+test('sin inscripción, explica por qué no hay práctica en vez de dejar que el modelo prometa una', async () => {
+  hayQuizSim = false;
+  pendientesSim = 0;
+  estadoSim = { inscrito: false };
+  const { p, textos } = fakeProvider();
+  const r = await manejarEvaluacion(texto('+56900050001', 'quiz'), PERSONA as any, p);
+
+  assert.equal(r.handled, true, 'el mensaje NO debe llegar al tutor: prometería una práctica');
+  assert.equal(textos.length, 1);
+  assert.match(textos[0], /no est[áa]s inscrito/i);
+  assert.match(textos[0], /\*empezar\*/, 'y le dice qué escribir');
+});
+
+test('inscrito pero sin microcápsulas completadas: dice que la práctica llega al terminar una', async () => {
+  hayQuizSim = false;
+  pendientesSim = 0;
+  estadoSim = { inscrito: true, completadas: 0, totalLecciones: 8 };
+  const { p, textos } = fakeProvider();
+  await manejarEvaluacion(texto('+56900050002', 'quiero el quiz'), PERSONA as any, p);
+  assert.match(textos[0], /A[úu]n no terminas la primera/i);
+  assert.match(textos[0], /\*continuar\*/);
+});
+
+test('todo respondido: lo dice, sin inventar una práctica', async () => {
+  hayQuizSim = false;
+  pendientesSim = 0;
+  estadoSim = { inscrito: true, completadas: 3, totalLecciones: 8 };
+  const { p, textos } = fakeProvider();
+  await manejarEvaluacion(texto('+56900050003', 'quiz'), PERSONA as any, p);
+  assert.match(textos[0], /no tienes pr[áa]ctica pendiente/i);
+});
+
+test('si hay práctica pendiente y no se pudo abrir, lo llama falla técnica y no "no tienes"', async () => {
+  // Decirle "no tienes práctica" a quien sí la tiene sería mentirle sobre su propio avance.
+  hayQuizSim = false;
+  pendientesSim = 2;
+  estadoSim = { inscrito: true, completadas: 2, totalLecciones: 8 };
+  const { p, textos } = fakeProvider();
+  await manejarEvaluacion(texto('+56900050004', 'quiz'), PERSONA as any, p);
+  assert.match(textos[0], /problema t[ée]cnico/i);
+  assert.doesNotMatch(textos[0], /no tienes pr[áa]ctica/i);
+  hayQuizSim = true;
+  pendientesSim = 0;
 });

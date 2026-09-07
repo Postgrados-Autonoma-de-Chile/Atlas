@@ -1,7 +1,9 @@
 import { getJson, setJson, kvDel } from '../store/kv';
 import { dbEnabled } from '../store/db';
-import { quizParaIniciar, iniciarAttempt, registrarRespuesta,
+import { quizParaIniciar, iniciarAttempt, registrarRespuesta, quizzesPendientes,
   type PreguntaConOpciones, type Interaccion } from '../store/evaluaciones';
+import { estadoAcademico } from '../store/cursos';
+import { log } from '../log';
 import { audit } from '../obs/audit';
 import type { InboundMessage, MessagingProvider } from '../messaging/types';
 import type { Persona } from '../store/personas';
@@ -242,7 +244,43 @@ export async function manejarEvaluacion(
   const texto = plano(textoDe(msg));
   if (!RE_INICIO.test(texto)) return { handled: false };
   const arrancado = await iniciarQuiz(waId, persona, provider, false);
-  return { handled: arrancado };
+  if (arrancado) return { handled: true };
+
+  // Pidió práctica y no hay ninguna que rendir. Se responde ACÁ y el mensaje NO sigue al modelo.
+  //
+  // Dejarlo pasar fue un error que le costó a un estudiante del piloto: el tutor —que por prompt
+  // sabe que "el sistema envía la práctica"— le anunció "ahí viene tu quiz" y nunca llegó nada,
+  // porque no tenía ninguna microcápsula completada. Prometer algo que el sistema no va a hacer es
+  // exactamente lo que el diseño determinista existe para evitar.
+  await explicarSinPractica(waId, persona, provider);
+  return { handled: true };
+}
+
+/** Por qué no hay práctica, según el estado real del estudiante. Nunca lo decide el modelo. */
+async function explicarSinPractica(
+  waId: string, persona: Persona, provider: MessagingProvider,
+): Promise<void> {
+  const [estado, pendientes] = await Promise.all([
+    estadoAcademico(persona.id),
+    quizzesPendientes(persona.id),
+  ]);
+
+  // Hay práctica pendiente pero no se pudo abrir: es una falla técnica, no un estado del curso, y
+  // decirle "no tienes práctica" sería mentirle.
+  if (pendientes > 0) {
+    log.warn('evaluacion: hay práctica pendiente pero no se pudo iniciar', { pendientes });
+    await provider.enviarTexto(waId, 'Tuve un problema técnico al abrir tu práctica 😕 Escribe *quiz* de nuevo en un momento, por favor.');
+    return;
+  }
+  if (!estado?.inscrito) {
+    await provider.enviarTexto(waId, 'La práctica es parte del curso y llega sola al terminar cada microcápsula 🙂 Todavía no estás inscrito: escribe *empezar* y partimos.');
+    return;
+  }
+  if (!estado.completadas) {
+    await provider.enviarTexto(waId, 'La práctica llega sola justo después de cada microcápsula 🙂 Aún no terminas la primera: escribe *continuar* y te la entrego.');
+    return;
+  }
+  await provider.enviarTexto(waId, 'Por ahora no tienes práctica pendiente: ya respondiste la de todo lo que llevas ✅ Escribe *continuar* para seguir con el curso.');
 }
 
 /**
