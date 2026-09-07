@@ -91,6 +91,14 @@ gcloud run jobs create atlas-curriculo --region us-east1 --image $IMG:v1 \
 gcloud run jobs execute atlas-curriculo --region us-east1 --wait
 ```
 
+```bash
+# Job 3 — reporte de la cohorte (solo lectura, sin datos personales). Para decidir CUÁNDO cambiar
+# el curso activo: archivar el anterior deja como "no inscrito" a quien esté a medio camino en él.
+gcloud run jobs create atlas-reporte --region us-east1 --image $IMG:v2   --service-account $SA --set-cloudsql-instances $SQL   --set-secrets DATABASE_URL=atlas-database-url:latest --max-retries 0 --task-timeout 5m   --command node --args="scripts/reporte-cohorte.mjs"
+gcloud run jobs execute atlas-reporte --region us-east1 --wait
+gcloud run jobs executions logs read $(gcloud run jobs executions list --job atlas-reporte   --region us-east1 --limit 1 --format='value(name)') --region us-east1
+```
+
 **Orden importante:** migrar → desplegar el servicio → cargar el currículo. El código nuevo lee
 columnas que la migración crea, así que desplegarlo antes deja el curso caído; y cargar el currículo
 antes del deploy hace que el código viejo sirva contenidos que no sabe interpretar.

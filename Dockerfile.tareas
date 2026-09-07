@@ -19,6 +19,7 @@ RUN npm ci --include=dev --no-fund --no-audit
 COPY migrations ./migrations
 COPY curriculo ./curriculo
 COPY scripts/cargar-curriculo.mjs ./scripts/cargar-curriculo.mjs
+COPY scripts/reporte-cohorte.mjs ./scripts/reporte-cohorte.mjs
 
 USER node
 # Por omisión, migrar. El job del currículo sobreescribe el comando.
