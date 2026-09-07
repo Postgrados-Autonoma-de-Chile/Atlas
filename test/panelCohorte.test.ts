@@ -118,6 +118,9 @@ test('la contención por riesgo vital se marca en la fila y en un aviso arriba',
   assert.match(html, /<b style="color:#b3261e">1<\/b><span>con contención/, 'una sola persona, no dos');
   assert.match(html, /4141/, 'el aviso recuerda qué se le entregó');
   assert.match(html, /NO se guarda/, 'lo que escribió no queda en ninguna parte');
+  assert.match(html, /no tiene seguimiento humano/,
+    'la marca no puede insinuar un proceso que el programa declaró que no existe');
+  assert.match(html, /nadie es notificado/);
 });
 
 test('sin contenciones, el panel no muestra el bloque rojo', async () => {

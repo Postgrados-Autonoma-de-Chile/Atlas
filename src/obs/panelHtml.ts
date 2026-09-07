@@ -111,9 +111,11 @@ export function panelCohorteHtml(r: ResumenPanel): string {
     (alertadas
       ? `<p class="aviso" style="background:#fdecea;border-left-color:#b3261e;color:#7a1a12">` +
         `<strong>${alertadas} ${alertadas === 1 ? 'persona' : 'personas'}</strong> escribió algo que activó la ` +
-        `contención por señal de riesgo vital: ATLAS detuvo el curso y entregó las líneas de ayuda ` +
-        `(*4141*, 600 360 7777, 131). Lo que escribió NO se guarda en ninguna parte, solo el hecho. ` +
-        `Si el programa contempla seguimiento humano, estas son las filas que lo requieren.</p>`
+        `contención por señal de riesgo vital. ATLAS detuvo el curso y entregó las líneas de ayuda ` +
+        `(*4141*, 600 360 7777, 131); lo que escribió NO se guarda en ninguna parte, solo el hecho.` +
+        `<br><strong>El programa no tiene seguimiento humano para estos casos</strong> (ver ` +
+        `docs/BIENESTAR.md): la respuesta automática fue la intervención completa. Esta marca es ` +
+        `informativa y nadie es notificado.</p>`
       : '') +
     `<p class="pie">Contiene nombres y teléfonos de personas reales. No compartir por canales abiertos ` +
     `ni subir a servicios de terceros. El correo y el RUT no aparecen acá: van cifrados y este panel ` +

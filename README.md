@@ -88,6 +88,7 @@ src/
 │   ├── colaTurnos.ts         # publish/decode Pub/Sub con orderingKey por estudiante
 │   └── index.ts              # factory del proveedor
 ├── flows/
+│   ├── bienestar.ts          # contención ante señal de riesgo vital (corre ANTES de todo)
 │   ├── registro.ts           # captura de identidad conversacional (determinista)
 │   ├── caracterizacion.ts    # cuestionario oficial de 11 preguntas (primer paso, obligatorio)
 │   ├── evaluacion.ts         # momento "Lo intento" de cada microcápsula (determinista)
@@ -132,7 +133,7 @@ infra/                        # Terraform del piloto GCP
 perf/                         # carga con k6 (firma HMAC real) + verificador de invariantes
 eval/golden-set.json          # casos de referencia del harness pedagógico
 contenido/                    # material del curso del piloto
-docs/                         # CURRICULO · DEPLOY · SEGURIDAD · OBSERVABILIDAD · CHATTIGO · specs/
+docs/                         # CURRICULO · BIENESTAR · DEPLOY · SEGURIDAD · OBSERVABILIDAD · CHATTIGO
 test/                         # 36 archivos, 234 tests
 ```
 
@@ -201,11 +202,15 @@ La regla dura del RAG: si nada supera `RAG_MIN_SCORE`, devuelve `encontrado:fals
 
 ---
 
-## 7. Los cinco flujos deterministas
+## 7. Los seis flujos deterministas
 
 ### Registro ([`flows/registro.ts`](src/flows/registro.ts))
 
 Según [`docs/specs/captura-identidad-estudiante.md`](docs/specs/). Consentimiento primero por botones, un dato por mensaje, confirmación del correo, máximo 2 reintentos por campo — al tercero se pausa y el mensaje pasa al tutor. La persona se crea recién con la captura mínima completa, de forma atómica. **El RUT no se pide acá**, solo al certificar.
+
+### Contención ante riesgo vital ([`flows/bienestar.ts`](src/flows/bienestar.ts))
+
+Corre **antes que todos los demás**, incluido el registro. El prompt del tutor ya tenía el protocolo, pero solo alcanza a los mensajes que llegan al modelo: en el piloto alguien escribió "tengo pensamientos suicidas" en el campo del nombre y el registro lo guardó como nombre. Detecta expresiones inequívocas de ideación suicida o autolesión, consume el turno, entrega las líneas de ayuda de Chile y registra que ocurrió sin guardar el texto. **El programa no tiene seguimiento humano para estos casos**, así que la respuesta automática es la intervención completa — alcance, límites y lo que haría falta para cambiarlo en [`docs/BIENESTAR.md`](docs/BIENESTAR.md).
 
 ### Caracterización ([`flows/caracterizacion.ts`](src/flows/caracterizacion.ts))
 
@@ -327,7 +332,7 @@ Otros scripts:
 
 ## 11. Tests
 
-**234 tests en 36 archivos**, todos en verde. Cubren, entre otros: el bucle del agente con el cliente mockeado, el pipeline de WhatsApp, la verificación de firma, el push de Pub/Sub, los cinco flujos deterministas, los siete casos curriculares del encargo, la validación de identidad, el troceado del RAG, el juez del harness, los recordatorios, la convocatoria, el adaptador Chattigo, el PDF del certificado, y dos suites dedicadas a que los guards y las verificaciones sean **fail-closed** (`failclosed.test.ts`, `seguridad.test.ts`).
+**234 tests en 36 archivos**, todos en verde. Cubren, entre otros: el bucle del agente con el cliente mockeado, el pipeline de WhatsApp, la verificación de firma, el push de Pub/Sub, los seis flujos deterministas, los siete casos curriculares del encargo, la validación de identidad, el troceado del RAG, el juez del harness, los recordatorios, la convocatoria, el adaptador Chattigo, el PDF del certificado, y dos suites dedicadas a que los guards y las verificaciones sean **fail-closed** (`failclosed.test.ts`, `seguridad.test.ts`).
 
 ### Recorrer el curso a mano, sin WhatsApp
 
