@@ -70,41 +70,51 @@ hay una imagen aparte ([`Dockerfile.tareas`](../Dockerfile.tareas)) que corre co
 proyecto, hablando con Cloud SQL por el conector: sin IP pública autorizada y con el mismo secreto
 que usa el servicio.
 
+Tres jobs, todos re-ejecutables. En PowerShell el continuador es `` ` `` y **`"$IMG:v2"` no
+funciona**: PowerShell lee `$IMG:` como variable con ámbito y manda el argumento vacío. Usar
+`"${IMG}:v2"`.
+
 ```bash
 IMG=us-east1-docker.pkg.dev/postgrados-ua/atlas/atlas-tareas
 SA=768793961060-compute@developer.gserviceaccount.com
 SQL=postgrados-ua:us-east1:atlas-demo
+COMUN="--region us-east1 --service-account $SA --set-cloudsql-instances $SQL \
+       --set-secrets DATABASE_URL=atlas-database-url:latest --max-retries 0 --task-timeout 10m"
 
-gcloud builds submit --config cloudbuild.tareas.yaml --substitutions=_TAG=v1
+gcloud builds submit --config cloudbuild.tareas.yaml --substitutions=_TAG=v2
 
-# Job 1 — migraciones (CMD por omisión de la imagen)
-gcloud run jobs create atlas-migrar --region us-east1 --image $IMG:v1 \
-  --service-account $SA --set-cloudsql-instances $SQL \
-  --set-secrets DATABASE_URL=atlas-database-url:latest --max-retries 0 --task-timeout 10m
+# Job 1 — migraciones (es el CMD por omisión de la imagen)
+gcloud run jobs create atlas-migrar --image $IMG:v2 $COMUN
 gcloud run jobs execute atlas-migrar --region us-east1 --wait
 
-# Job 2 — carga del currículo (idempotente; --dry-run simula y hace rollback)
-gcloud run jobs create atlas-curriculo --region us-east1 --image $IMG:v1 \
-  --service-account $SA --set-cloudsql-instances $SQL \
-  --set-secrets DATABASE_URL=atlas-database-url:latest --max-retries 0 --task-timeout 10m \
+# Job 2 — carga del currículo (idempotente; con --dry-run simula y hace rollback)
+gcloud run jobs create atlas-curriculo --image $IMG:v2 $COMUN \
   --command node --args="scripts/cargar-curriculo.mjs,--archivar-otros"
 gcloud run jobs execute atlas-curriculo --region us-east1 --wait
-```
 
-```bash
-# Job 3 — reporte de la cohorte (solo lectura, sin datos personales). Para decidir CUÁNDO cambiar
-# el curso activo: archivar el anterior deja como "no inscrito" a quien esté a medio camino en él.
-gcloud run jobs create atlas-reporte --region us-east1 --image $IMG:v2   --service-account $SA --set-cloudsql-instances $SQL   --set-secrets DATABASE_URL=atlas-database-url:latest --max-retries 0 --task-timeout 5m   --command node --args="scripts/reporte-cohorte.mjs"
+# Job 3 — reporte de la cohorte (solo lectura, sin datos personales)
+gcloud run jobs create atlas-reporte --image $IMG:v2 $COMUN \
+  --command node --args="scripts/reporte-cohorte.mjs"
 gcloud run jobs execute atlas-reporte --region us-east1 --wait
-gcloud run jobs executions logs read $(gcloud run jobs executions list --job atlas-reporte   --region us-east1 --limit 1 --format='value(name)') --region us-east1
+
+# La salida de cualquier job:
+gcloud run jobs executions logs read \
+  $(gcloud run jobs executions list --job atlas-reporte --region us-east1 --limit 1 --format='value(name)') \
+  --region us-east1
 ```
 
 **Orden importante:** migrar → desplegar el servicio → cargar el currículo. El código nuevo lee
 columnas que la migración crea, así que desplegarlo antes deja el curso caído; y cargar el currículo
 antes del deploy hace que el código viejo sirva contenidos que no sabe interpretar.
 
-Los dos jobs son re-ejecutables. Para actualizar el material curricular basta reconstruir la imagen
-y ejecutar el job 2 otra vez: reconcilia por códigos estables, así que nadie pierde su avance.
+**Antes del job 2, correr el job 3.** Cargar el currículo **archiva** los cursos anteriores, y
+`estadoAcademico` solo mira el curso activo: quien esté a medio camino en un curso archivado queda
+como *no inscrito* y arrancaría de cero en el nuevo (su avance queda en la base, pero inaccesible).
+Con una cohorte en curso eso es una decisión sobre personas, no sobre esquema — el reporte dice a
+cuántas afecta y en qué punto están.
+
+Para actualizar el material curricular más adelante basta reconstruir la imagen y volver a ejecutar
+el job 2: reconcilia por códigos estables, así que nadie pierde su avance.
 
 ## 3. Validación post-deploy
 
