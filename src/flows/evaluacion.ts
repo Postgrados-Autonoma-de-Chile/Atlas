@@ -3,6 +3,7 @@ import { dbEnabled } from '../store/db';
 import { quizParaIniciar, iniciarAttempt, registrarRespuesta, quizzesPendientes,
   type PreguntaConOpciones, type Interaccion } from '../store/evaluaciones';
 import { estadoAcademico } from '../store/cursos';
+import { ofrecerNotaPersonal } from './notaPersonal';
 import { log } from '../log';
 import { audit } from '../obs/audit';
 import type { InboundMessage, MessagingProvider } from '../messaging/types';
@@ -48,7 +49,13 @@ type EstadoEvaluacion = {
   respondidos?: number;
   /** Este ítem ya tuvo su revisión sin penalización: la próxima respuesta cierra y avanza. */
   reintentado?: boolean;
+  /** Microcápsula de la que nació la práctica. La 2 (DEFINO) ofrece después su campo personal. */
+  leccionId?: string;
+  pasoRuta?: string | null;
 };
+
+/** De qué microcápsula nació el quiz pendiente. */
+export type OrigenQuiz = { lessonId: string; pasoRuta: string | null };
 
 const KEY = (waId: string) => `evaluacion:${waId}`;
 const PENDIENTE_KEY = (waId: string) => `quiz:pendiente:${waId}`;
@@ -73,16 +80,20 @@ const RE_SALIR = /\b(salir|pausa(r)?|detener|cancelar|despues sigo)\b/;
  * El TTL es corto porque este marcador solo vive entre la ejecución de la herramienta y el envío de
  * la respuesta del tutor, dentro del mismo turno.
  */
-export async function marcarQuizPendiente(waId: string, finCurso: boolean): Promise<void> {
-  await setJson(PENDIENTE_KEY(waId), { en: Date.now(), finCurso }, 300);
+export async function marcarQuizPendiente(
+  waId: string, finCurso: boolean, origen?: OrigenQuiz,
+): Promise<void> {
+  await setJson(PENDIENTE_KEY(waId), { en: Date.now(), finCurso, origen: origen ?? null }, 300);
 }
 
 /** ¿Quedó un quiz pendiente de enviar en este turno? Lo consume (lectura destructiva). */
-export async function tomarQuizPendiente(waId: string): Promise<{ finCurso: boolean } | null> {
-  const p = await getJson<{ en: number; finCurso: boolean }>(PENDIENTE_KEY(waId));
+export async function tomarQuizPendiente(
+  waId: string,
+): Promise<{ finCurso: boolean; origen: OrigenQuiz | null } | null> {
+  const p = await getJson<{ en: number; finCurso: boolean; origen?: OrigenQuiz | null }>(PENDIENTE_KEY(waId));
   if (!p) return null;
   await kvDel(PENDIENTE_KEY(waId));
-  return { finCurso: Boolean(p.finCurso) };
+  return { finCurso: Boolean(p.finCurso), origen: p.origen ?? null };
 }
 
 /** Texto plano o título del botón. */
@@ -220,15 +231,26 @@ export async function manejarEvaluacion(
       // manda entregar; el conteo de aciertos NO se muestra porque la certificación es por
       // finalización y sin evaluación formal: poner una nota inventaría una exigencia.
       const criterio = estado.interaccion?.retroalimentacion || r.explicacion;
-      const siguientePaso = estado.finCurso
-        ? 'Con esta terminaste todas las microcápsulas del curso 🎓 Escribe *certificado* para obtener el tuyo.'
-        : '¿Seguimos con la próxima microcápsula? Escribe *continuar* cuando quieras.';
-      await provider.enviarTexto(waId, `💡 ${criterio}\n\n${siguientePaso}`);
       void audit({
         type: 'evaluacion_finalizada',
         dialogId: waId,
         detail: { quiz: estado.quizId, intento: estado.intentoN, correctas: r.correctas, total: r.total, respondidos },
       });
+
+      // La microcápsula 2 (DEFINO) cierra con su campo personal y no con "¿seguimos?": su documento
+      // define una "Aplicación personal" opcional —«Escribe una frase breve sobre una situación que
+      // quieras resolver»— cuya frase se recupera en la cápsula 8. El traspaso al curso lo hace ese
+      // flujo, cuando la persona escribe su frase o decide saltarla.
+      if (!estado.finCurso && estado.pasoRuta === 'DEFINO' && estado.leccionId) {
+        await provider.enviarTexto(waId, `💡 ${criterio}`);
+        await ofrecerNotaPersonal(waId, provider, estado.leccionId);
+        return { handled: true };
+      }
+
+      const siguientePaso = estado.finCurso
+        ? 'Con esta terminaste todas las microcápsulas del curso 🎓 Escribe *certificado* para obtener el tuyo.'
+        : '¿Seguimos con la próxima microcápsula? Escribe *continuar* cuando quieras.';
+      await provider.enviarTexto(waId, `💡 ${criterio}\n\n${siguientePaso}`);
       return { handled: true };
     }
 
@@ -296,12 +318,13 @@ export async function iniciarQuizPendiente(
   if (!pendiente) return false;
   // Si el estudiante ya está en medio de otra evaluación, no se le encima una segunda.
   if (await getJson<EstadoEvaluacion>(KEY(waId))) return false;
-  return iniciarQuiz(waId, persona, provider, pendiente.finCurso);
+  return iniciarQuiz(waId, persona, provider, pendiente.finCurso, pendiente.origen);
 }
 
 /** Arranca el quiz que corresponda al avance del estudiante. Devuelve false si no hay ninguno. */
 async function iniciarQuiz(
   waId: string, persona: Persona, provider: MessagingProvider, finCurso: boolean,
+  origen: OrigenQuiz | null = null,
 ): Promise<boolean> {
   const pendiente = await quizParaIniciar(persona.id);
   if (!pendiente) return false; // sin lecciones completadas con quiz: que el tutor explique
@@ -317,6 +340,7 @@ async function iniciarQuiz(
     attemptId: inicio.attemptId, quizId: inicio.quizId, titulo: inicio.titulo,
     intentoN: inicio.intentoN, total: inicio.total, pregunta: inicio.primera,
     enviadaEn: Date.now(), finCurso, interaccion: inter, respondidos: 0,
+    leccionId: origen?.lessonId, pasoRuta: origen?.pasoRuta ?? null,
   } satisfies EstadoEvaluacion, TTL);
 
   // La CONSIGNA del documento abre la actividad: es el enunciado curricular, y en una

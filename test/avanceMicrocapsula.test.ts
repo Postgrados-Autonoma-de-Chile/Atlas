@@ -175,3 +175,45 @@ test('el traspaso no depende del modelo: la marca de fin de curso viaja en el es
   assert.match(cierre, /próxima microcápsula/i, 'el avance no se bloquea por haber fallado');
   assert.doesNotMatch(cierre.toLowerCase(), /nota|puntaje|aprob/, 'y no aparece ninguna calificación');
 });
+
+// ── El enganche del campo personal de la microcápsula 2 ────────────────────
+
+test('la microcápsula 2 (DEFINO) cierra ofreciendo "Mi necesidad", no con "¿seguimos?"', async () => {
+  // Su documento define una "Aplicación personal" opcional cuya frase se recupera en la cápsula 8.
+  // Si el cierre invitara a continuar, ese campo no existiría en ninguna parte del recorrido.
+  nuevo();
+  const { p, textos } = fakeProvider();
+  await marcarQuizPendiente(DE, false, { lessonId: 'l2', pasoRuta: 'DEFINO' });
+  await iniciarQuizPendiente(DE, PERSONA, p);
+  await manejarEvaluacion(btn('resp:o2', 'Cursos vespertinos'), PERSONA, p);
+
+  const todo = textos.join(String.fromCharCode(10));
+  assert.match(todo, /explicita la necesidad/, 'el criterio del documento se entrega igual');
+  assert.match(textos.at(-1)!, /Mi necesidad/);
+  assert.match(textos.at(-1)!, /opcional/i);
+  // El propio mensaje del campo dice cómo saltarlo —el documento prohíbe exigir el envío— así que
+  // sí menciona la próxima microcápsula. Lo que NO debe aparecer es el cierre genérico, que se
+  // habría comido el campo personal.
+  assert.doesNotMatch(textos.at(-1)!, /¿Seguimos con la próxima/i, 'el cierre genérico no debe reemplazarlo');
+});
+
+test('las demás microcápsulas cierran como siempre', async () => {
+  nuevo();
+  const { p, textos } = fakeProvider();
+  await marcarQuizPendiente(DE, false, { lessonId: 'l5', pasoRuta: 'VERIFICO' });
+  await iniciarQuizPendiente(DE, PERSONA, p);
+  await manejarEvaluacion(btn('resp:o2', 'Cursos vespertinos'), PERSONA, p);
+  assert.match(textos.at(-1)!, /próxima microcápsula/i);
+  assert.doesNotMatch(textos.at(-1)!, /Mi necesidad/);
+});
+
+test('la última microcápsula apunta al certificado aunque fuera DEFINO', async () => {
+  // Defensivo: si el orden del currículo cambiara, el fin de curso manda sobre el campo personal.
+  nuevo();
+  const { p, textos } = fakeProvider();
+  await marcarQuizPendiente(DE, true, { lessonId: 'l2', pasoRuta: 'DEFINO' });
+  await iniciarQuizPendiente(DE, PERSONA, p);
+  await manejarEvaluacion(btn('resp:o2', 'Cursos vespertinos'), PERSONA, p);
+  assert.match(textos.at(-1)!, /\*certificado\*/);
+  assert.doesNotMatch(textos.at(-1)!, /Mi necesidad/);
+});

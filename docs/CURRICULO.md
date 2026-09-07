@@ -42,6 +42,8 @@ Dictaba **otro curso**. No le faltaban piezas: los contenidos no coincidían.
 | Certificación por finalización, sin evaluación formal | Plan Nacional §Cierre | Se eliminó el puntaje del cierre; el prompt prohíbe hablar de notas | `src/flows/evaluacion.ts`, `src/core/channel.ts` |
 | Cuestionario de caracterización primero | Cuestionario (Ajustado) | Flujo determinista de 11 preguntas; ruta bloqueada hasta completarlo | `src/flows/caracterizacion.ts`, `src/store/caracterizacion.ts`, `src/ai/toolRunner.ts` |
 | Producto de cierre: ficha de 5 campos | Plan Nacional §Producto de cierre · Microcápsula 08 | Flujo de 5 campos = 5 pasos; su completitud completa la cápsula 8 | `src/flows/fichaCierre.ts`, `src/store/fichaCierre.ts` |
+| Campo personal "Mi necesidad", opcional | Microcápsula 02 §4 · Pantalla 5 · Inventario | Flujo propio al cerrar la práctica de la cápsula 2; saltarlo es un camino de primera clase | `src/flows/notaPersonal.ts` |
+| No solicitar datos sensibles en ese campo | Microcápsula 02 §12 checklist | RUT, teléfono y correo se rechazan y NO se guardan | `src/flows/notaPersonal.ts` |
 | Frase personal de la cápsula 2 recuperable en la 8 | Microcápsula 02 §13 | Tabla `nota_estudiante`; la ficha la ofrece como punto de partida | `migrations/0012`, `src/store/fichaCierre.ts` |
 | Ejemplos de empleo, formación, hogar, trámites | Microcápsula 02 §9 | Instrucción en el prompt | `src/core/channel.ts` |
 | No pedir RUT ni datos sensibles en ejemplos | Microcápsula 02 §13 | Prohibición explícita en el prompt | `src/core/channel.ts` |
@@ -172,5 +174,5 @@ pieza aparte: hoy vive dentro del guion de cierre. El plan lo define como recurs
 documento entrega un solo párrafo de «Retroalimentación prevista» por actividad. Redactar uno por
 ítem sería escribir currículo, así que el criterio se entrega completo al cerrar.
 
-**El campo personal opcional de la cápsula 2** tiene tabla y lector, pero el flujo que lo ofrece
-durante esa cápsula no está implementado — hoy solo se recupera si existe.
+**El momento "Me llevo una herramienta"** es el último pendiente curricular: hoy vive dentro del
+guion de cierre y el plan lo define como recurso propio, exportable.

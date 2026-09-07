@@ -171,7 +171,9 @@ export async function entregarLeccionActual(personId: string): Promise<{ leccion
 }
 
 export type ResultadoCompletar = {
-  completada: { id: string; orden: number; titulo: string };
+  /** pasoRuta permite que el flujo sepa QUÉ microcápsula se cerró sin volver a consultarla: la 2
+   *  (DEFINO) ofrece después el campo personal que su documento define. */
+  completada: { id: string; orden: number; titulo: string; pasoRuta: string | null };
   minutosAcumulados: number;
   cursoCompletado: boolean;
   siguiente?: { orden: number; titulo: string };
@@ -202,7 +204,7 @@ export async function completarLeccionActual(
     if (!enr) { await client.query('ROLLBACK'); return null; }
 
     const l = await client.query(
-      `SELECT l.id, l.orden, l.titulo, l.duracion_min
+      `SELECT l.id, l.orden, l.titulo, l.duracion_min, l.paso_ruta
        FROM lesson l JOIN module m ON m.id = l.module_id
        WHERE m.course_id = $1
          AND NOT EXISTS (SELECT 1 FROM lesson_progress lp
@@ -256,7 +258,7 @@ export async function completarLeccionActual(
     }
     await client.query('COMMIT');
     return {
-      completada: { id: actual.id, orden: actual.orden, titulo: actual.titulo },
+      completada: { id: actual.id, orden: actual.orden, titulo: actual.titulo, pasoRuta: actual.paso_ruta ?? null },
       minutosAcumulados: upd.rows[0].minutos_acumulados,
       cursoCompletado,
       siguiente: siguiente ? { orden: siguiente.orden, titulo: siguiente.titulo } : undefined,

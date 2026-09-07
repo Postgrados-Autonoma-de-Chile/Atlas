@@ -20,6 +20,7 @@ import { manejarRegistro, CONSENT_VERSION } from '../flows/registro';
 import { manejarCaracterizacion } from '../flows/caracterizacion';
 import { manejarFichaCierre } from '../flows/fichaCierre';
 import { manejarEvaluacion, iniciarQuizPendiente } from '../flows/evaluacion';
+import { manejarNotaPersonal } from '../flows/notaPersonal';
 import { manejarCertificacion } from '../flows/certificacion';
 import { contextoAcademico } from '../store/cursos';
 import { registrarOptOut, registrarOptIn } from '../store/personas';
@@ -267,6 +268,12 @@ export async function procesarMensajeEntrante(msg: InboundMessage, provider: Mes
   // (el bloqueo vive en las tools, no en el prompt).
   const caracterizacion = await manejarCaracterizacion(msg, persona, provider);
   if (caracterizacion.handled) return;
+
+  // "Mi necesidad": el campo personal opcional de la microcápsula 2, que se abre al cerrar su
+  // práctica. Va antes de la evaluación porque su ventana existe justo cuando no hay quiz activo, y
+  // lo que la persona escriba ahí es una frase libre que ningún otro flujo debe interpretar.
+  const nota = await manejarNotaPersonal(msg, persona, provider);
+  if (nota.handled) return;
 
   // Evaluaciones formativas (F7): interceptor determinista de respuestas de quiz (botones/listas o
   // texto A-D/V-F) ANTES del motor — el parsing y el registro académico jamás se delegan al LLM.

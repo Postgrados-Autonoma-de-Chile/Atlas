@@ -179,7 +179,11 @@ export async function executeTool(name: string, _input: unknown, ctx?: AgentCont
         // ¿La microcápsula completada tiene mini-quiz? Se deja marcado para que el pipeline lo
         // envíe en cuanto salga esta respuesta (F7). El quiz NO se ofrece: se conduce siempre.
         const quiz = await quizDeLeccion(r.completada.id);
-        if (quiz && ctx?.conversationId) await marcarQuizPendiente(ctx.conversationId, r.cursoCompletado);
+        if (quiz && ctx?.conversationId) {
+          await marcarQuizPendiente(ctx.conversationId, r.cursoCompletado, {
+            lessonId: r.completada.id, pasoRuta: r.completada.pasoRuta,
+          });
+        }
         return {
           ok: true,
           completada: { orden: r.completada.orden, titulo: r.completada.titulo },
