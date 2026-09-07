@@ -167,8 +167,11 @@ export async function iniciarAttempt(enrollmentId: string, quizId: string): Prom
         tipo: f.tipo_interaccion ?? 'seleccion_unica',
         consigna: f.consigna ?? null,
         retroalimentacion: f.retroalimentacion ?? null,
-        // El mínimo no puede exceder los ítems existentes, o la actividad nunca cerraría.
-        minimoRequerido: Math.min(Math.max(1, f.minimo_requerido ?? 1), total),
+        // Sin mínimo declarado se responden TODOS los ítems: solo las cápsulas 6 y 8 del plan
+        // piden "al menos N". El valor por omisión importa de verdad — un quiz cargado antes de
+        // la alineación curricular tiene minimo_requerido en NULL, y asumir 1 lo cerraba después
+        // de la primera pregunta. El tope sigue siendo los ítems existentes, o nunca cerraría.
+        minimoRequerido: Math.min(Math.max(1, f.minimo_requerido ?? total), total),
       },
     };
   } catch (e) {
