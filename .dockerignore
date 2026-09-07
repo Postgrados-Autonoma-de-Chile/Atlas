@@ -9,6 +9,7 @@ scripts
 !scripts/cargar-curriculo.mjs
 !scripts/reporte-cohorte.mjs
 !scripts/ingerir-contenido.ts
+!scripts/eliminar-persona.ts
 docs
 *.md
 .github

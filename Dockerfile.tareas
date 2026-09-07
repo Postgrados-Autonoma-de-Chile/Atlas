@@ -33,6 +33,7 @@ COPY scripts/reporte-cohorte.mjs ./scripts/reporte-cohorte.mjs
 COPY tsconfig.json ./
 COPY src ./src
 COPY scripts/ingerir-contenido.ts ./scripts/ingerir-contenido.ts
+COPY scripts/eliminar-persona.ts ./scripts/eliminar-persona.ts
 
 USER node
 # Por omisión, migrar. El job del currículo sobreescribe el comando.

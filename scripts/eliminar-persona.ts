@@ -57,7 +57,14 @@ async function main() {
   }
 
   if (row.wa_id) {
-    for (const prefijo of ['mem:', 'registro:', 'evaluacion:', 'cert:', 'quiz:oferta:', 'ult_in:']) {
+    // Un prefijo que falte deja residuo de una persona ya suprimida, así que esta lista tiene que
+    // seguir a los flujos: 'caracterizacion:', 'ficha:' y 'quiz:pendiente:' nacieron con la
+    // alineación curricular y no estaban acá. ('quiz:oferta:' desapareció al volverse obligatoria
+    // la práctica; se conserva para limpiar instalaciones que aún lo tengan.)
+    for (const prefijo of [
+      'mem:', 'registro:', 'caracterizacion:', 'evaluacion:', 'quiz:pendiente:', 'quiz:oferta:',
+      'ficha:', 'cert:', 'ult_in:',
+    ]) {
       await kvDel(`${prefijo}${row.wa_id}`);
     }
     await kvDel(`certcode:${row.id}`);
