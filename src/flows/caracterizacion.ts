@@ -95,12 +95,23 @@ async function enviarPregunta(
     await provider.enviarBotones(waId, cuerpo, p.opciones.map((o) => ({ id: `car:${o.id}`, titulo: o.texto.slice(0, 20) })));
     return;
   }
-  if (n <= MAX_LISTA) {
+  // El título de una fila admite pocos caracteres: va el número, y el texto completo en la
+  // descripción, que admite 72. Hoy la opción más larga del cuestionario tiene 42, pero si el
+  // material creciera la alternativa aparecería cortada en pantalla sin aviso — como pasó en la
+  // práctica de la microcápsula 1. Cuando no cabe, el texto va en el cuerpo.
+  const TOPE_FILA = 72;
+  if (n <= MAX_LISTA && p.opciones.every((o) => o.texto.length <= TOPE_FILA)) {
     await provider.enviarLista(
       waId, cuerpo, 'Responder',
-      // El título de una fila admite pocos caracteres: va el número y el texto completo en la
-      // descripción, igual que en las evaluaciones.
-      p.opciones.map((o, i) => ({ id: `car:${o.id}`, titulo: String(i + 1), descripcion: o.texto.slice(0, 72) })),
+      p.opciones.map((o, i) => ({ id: `car:${o.id}`, titulo: String(i + 1), descripcion: o.texto })),
+    );
+    return;
+  }
+  if (n <= MAX_LISTA) {
+    const enumeradas = p.opciones.map((o, i) => `${i + 1}. ${o.texto}`).join('\n');
+    await provider.enviarLista(
+      waId, `${cuerpo}\n\n${enumeradas}`, 'Responder',
+      p.opciones.map((o, i) => ({ id: `car:${o.id}`, titulo: String(i + 1) })),
     );
     return;
   }

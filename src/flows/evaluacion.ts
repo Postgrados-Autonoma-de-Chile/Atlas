@@ -140,9 +140,26 @@ async function enviarPregunta(waId: string, provider: MessagingProvider, p: Preg
     );
     return;
   }
+
+  // La descripción de una fila de lista admite 72 caracteres. Cuando alguna alternativa no cabe, el
+  // texto completo va en el CUERPO del mensaje y las filas quedan con la letra sola.
+  //
+  // Cortarla era peor de lo que parecía: en la cápsula 1 mostraba "…para que Carolina pueda revi", y
+  // en la 3 la mejor solicitud tiene 166 caracteres y se perdían dos tercios — justo la actividad
+  // donde LEER la solicitud completa es el aprendizaje. La regla del proyecto vale también acá: si el
+  // contenido no cabe en la afordancia, se cambia la afordancia, no se recorta el contenido.
+  const TOPE_FILA = 72;
+  if (p.opciones.every((o) => o.texto.length <= TOPE_FILA)) {
+    await provider.enviarLista(
+      waId, cuerpo, 'Responder',
+      p.opciones.slice(0, 10).map((o, i) => ({ id: `resp:${o.id}`, titulo: LETRAS[i] ?? String(i + 1), descripcion: o.texto })),
+    );
+    return;
+  }
+  const enumeradas = p.opciones.map((o, i) => `*${LETRAS[i] ?? i + 1}.* ${o.texto}`).join('\n\n');
   await provider.enviarLista(
-    waId, cuerpo, 'Responder',
-    p.opciones.slice(0, 10).map((o, i) => ({ id: `resp:${o.id}`, titulo: LETRAS[i] ?? String(i + 1), descripcion: o.texto.slice(0, 72) })),
+    waId, `${cuerpo}\n\n${enumeradas}`, 'Responder',
+    p.opciones.slice(0, 10).map((o, i) => ({ id: `resp:${o.id}`, titulo: LETRAS[i] ?? String(i + 1) })),
   );
 }
 

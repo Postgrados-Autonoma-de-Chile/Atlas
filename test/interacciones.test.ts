@@ -1,5 +1,6 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 // Los cuatro tipos de interacción "Lo intento" del plan curricular, con los ítems REALES de los
 // documentos de las microcápsulas.
@@ -299,4 +300,21 @@ test('elección de modalidad: ambas opciones son válidas y ninguna se califica'
   assert.equal(r!.esCorrecta, true, 'una elección legítima no puede registrarse como fallida');
   assert.equal(r!.sinRespuestaCorrecta, true);
   assert.equal(r!.correctaTexto, '', 'no hay "la correcta" que mostrar');
+});
+
+// ── Guarda del dato ───────────────────────────────────────────────────────
+
+test('el texto completo de cada alternativa está en el currículo, sin recortes', () => {
+  // Guarda del dato: si el cargador o el extractor empezaran a truncar, la actividad perdería su
+  // sentido antes de llegar a WhatsApp.
+  const doc = JSON.parse(readFileSync(new URL('../curriculo/nivel1.json', import.meta.url), 'utf-8'));
+  const cap1 = doc.microcapsulas.find((m: any) => m.orden === 1);
+  const larga = cap1.interaccion.items.find((i: any) => i.texto.length > 72);
+  assert.ok(larga, 'la cápsula 1 tiene una alternativa de más de 72 caracteres');
+  assert.match(larga.texto, /revisarlas\.$/, 'y termina completa, no en "revi"');
+
+  const cap3 = doc.microcapsulas.find((m: any) => m.orden === 3);
+  const solicitud = cap3.interaccion.items.find((i: any) => i.texto.length > 150);
+  assert.ok(solicitud, 'la cápsula 3 tiene la solicitud larga');
+  assert.match(solicitud.texto, /tabla\.$/);
 });
