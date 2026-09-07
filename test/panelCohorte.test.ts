@@ -29,7 +29,7 @@ const { panelCohorteHtml } = await import('../src/obs/panelHtml');
 const FILA = {
   id: 'p1', nombre: 'Rodrigo', apellido: 'Palma', created_at: HACE(6),
   caracterizacion_completada_en: HACE(5), wa_id: '+56912345678',
-  turnos: 14, eventos: 31, ultimo: HACE(1),
+  turnos: 14, eventos: 31, alertas: 0, ultimo: HACE(1),
   curso: 'Nivel Inicial: Alfabetización ciudadana en Inteligencia Artificial',
   curso_estado: 'activo', inscripcion: 'activa', total: 8, completadas: 3, folio: null,
 };
@@ -105,4 +105,23 @@ test('la página avisa qué contiene y que la auditoría se purga', async () => 
   assert.match(html, /conserva 90 días/, 'un cero puede ser historial purgado, no inactividad');
   assert.match(html, /No compartir/);
   assert.doesNotMatch(html, /https?:\/\//, 'sin recursos remotos: nada viaja a un tercero');
+});
+
+test('la contención por riesgo vital se marca en la fila y en un aviso arriba', async () => {
+  // El evento vivía en audit_log, que nadie lee. Si el programa contempla seguimiento humano,
+  // esta es la fila que lo requiere; sin marcarla, la detección no sirve de nada.
+  filas = [{ ...FILA, alertas: 2 }, { ...FILA, id: 'p2', alertas: 0 }];
+  const r = await panelCohorte(90);
+  assert.equal(r!.filas[0].alertasBienestar, 2);
+  const html = panelCohorteHtml(r!);
+  assert.match(html, /contención ×2/);
+  assert.match(html, /<b style="color:#b3261e">1<\/b><span>con contención/, 'una sola persona, no dos');
+  assert.match(html, /4141/, 'el aviso recuerda qué se le entregó');
+  assert.match(html, /NO se guarda/, 'lo que escribió no queda en ninguna parte');
+});
+
+test('sin contenciones, el panel no muestra el bloque rojo', async () => {
+  filas = [FILA];
+  const html = panelCohorteHtml((await panelCohorte(90))!);
+  assert.doesNotMatch(html, /contención/);
 });

@@ -15,6 +15,7 @@ import { getRequestContext, runWithRequestContext } from '../obs/requestContext'
 import { messagingProvider, normalizarEntrante } from '../messaging';
 import { pubsubHabilitado, publicarTurno } from '../messaging/colaTurnos';
 import type { InboundMessage, InboundStatus, MessagingProvider } from '../messaging';
+import { manejarBienestar } from '../flows/bienestar';
 import { manejarRegistro, CONSENT_VERSION } from '../flows/registro';
 import { manejarCaracterizacion } from '../flows/caracterizacion';
 import { manejarFichaCierre } from '../flows/fichaCierre';
@@ -218,6 +219,15 @@ export async function procesarMensajeEntrante(msg: InboundMessage, provider: Mes
 
   // Marcar como leído (check azul) — mejora la experiencia; no crítico.
   void provider.marcarLeido(msg.waMessageId).catch(() => {});
+
+  // Contención ante señal de riesgo vital: va ANTES que todo lo demás, incluido el registro.
+  //
+  // El prompt del tutor ya tiene el protocolo, pero solo alcanza a los mensajes que llegan al
+  // modelo. En el piloto alguien escribió "tengo pensamientos suicidas" en el campo del NOMBRE: el
+  // registro lo aceptó como nombre, siguió pidiendo el apellido, y la frase quedó guardada en su
+  // ficha. Acá se intercepta antes de que cualquier flujo la consuma.
+  const bienestar = await manejarBienestar(msg, provider);
+  if (bienestar.handled) return;
 
   // Registro de identidad (F3): asistente determinista para usuarios sin Persona. Si consume el
   // mensaje (pregunta/valida/persiste), el motor no corre. Sin BD (dev) se omite limpiamente.

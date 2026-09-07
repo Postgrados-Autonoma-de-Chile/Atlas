@@ -22,6 +22,8 @@ export type FilaPanel = {
   /** Todos los eventos registrados de esa conversación: registro, cuestionario, práctica, etc. */
   eventos: number;
   ultimoEn: Date | null;
+  /** Veces que se activó la contención por señal de riesgo vital. Para seguimiento del equipo. */
+  alertasBienestar: number;
   curso: string | null;
   cursoArchivado: boolean;
   inscripcion: string | null;
@@ -53,6 +55,7 @@ export async function panelCohorte(retencionDias: number): Promise<ResumenPanel 
          SELECT dialog_id,
                 count(*)::int AS eventos,
                 count(*) FILTER (WHERE type = 'turn')::int AS turnos,
+                count(*) FILTER (WHERE type = 'alerta_bienestar')::int AS alertas,
                 max(ts) AS ultimo
            FROM audit_log
           WHERE dialog_id IS NOT NULL
@@ -70,6 +73,7 @@ export async function panelCohorte(retencionDias: number): Promise<ResumenPanel 
               i.valor_lookup AS wa_id,
               COALESCE(a.turnos, 0) AS turnos,
               COALESCE(a.eventos, 0) AS eventos,
+              COALESCE(a.alertas, 0) AS alertas,
               a.ultimo,
               ins.curso, ins.curso_estado, ins.estado AS inscripcion, ins.total,
               (SELECT count(*)::int FROM lesson_progress lp
@@ -93,6 +97,7 @@ export async function panelCohorte(retencionDias: number): Promise<ResumenPanel 
         turnos: f.turnos,
         eventos: f.eventos,
         ultimoEn: f.ultimo ?? null,
+        alertasBienestar: f.alertas ?? 0,
         curso: f.curso ?? null,
         cursoArchivado: f.curso_estado ? f.curso_estado !== 'activo' : false,
         inscripcion: f.inscripcion ?? null,

@@ -38,6 +38,8 @@ export function panelCohorteHtml(r: ResumenPanel): string {
   const activas7 = r.filas.filter((f) => (hace(f.ultimoEn).dias ?? 999) <= 7).length;
   const conAvance = r.filas.filter((f) => f.completadas > 0).length;
 
+  const alertadas = r.filas.filter((f) => f.alertasBienestar > 0).length;
+
   const filas = r.filas
     .map((f) => {
       const e = estadoDe(f);
@@ -45,7 +47,10 @@ export function panelCohorteHtml(r: ResumenPanel): string {
       const gris = (h.dias ?? 999) > 14 ? 'color:#8a8a8a' : '';
       return (
         `<tr style="${gris}">` +
-        `<td><strong>${escapar(f.nombre)}</strong></td>` +
+        `<td><strong>${escapar(f.nombre)}</strong>` +
+        (f.alertasBienestar > 0
+          ? ` <span class="alerta" title="Se activó la contención por señal de riesgo vital ${f.alertasBienestar} ${f.alertasBienestar === 1 ? 'vez' : 'veces'}">contención ×${f.alertasBienestar}</span>`
+          : '') + `</td>` +
         `<td class="mono">${escapar(f.waId)}</td>` +
         `<td style="color:${e.color}">${escapar(e.texto)}</td>` +
         `<td class="num">${f.turnos}</td>` +
@@ -80,6 +85,7 @@ export function panelCohorteHtml(r: ResumenPanel): string {
       .num{text-align:right;font-variant-numeric:tabular-nums}
       .aviso{margin:1.2rem 0 0;padding:.7rem .9rem;background:#fff8e6;border-left:3px solid #d4a017;border-radius:4px;font-size:.8rem;color:#5a4a00}
       .pie{margin:1rem 0 0;font-size:.75rem;color:#8a8a8a}
+      .alerta{display:inline-block;margin-left:.35rem;padding:.05rem .35rem;border-radius:4px;background:#fdecea;color:#b3261e;font-size:.7rem;font-weight:600;vertical-align:middle}
     </style>` +
     `<body><div class="caja">` +
     `<h1>Cohorte ATLAS</h1>` +
@@ -89,6 +95,9 @@ export function panelCohorteHtml(r: ResumenPanel): string {
     `<div class="t"><b>${activas7}</b><span>activas (7 días)</span></div>` +
     `<div class="t"><b>${conAvance}</b><span>con avance</span></div>` +
     `<div class="t"><b>${r.filas.filter((f) => f.folio).length}</b><span>certificadas</span></div>` +
+    (alertadas
+      ? `<div class="t" style="background:#fdecea"><b style="color:#b3261e">${alertadas}</b><span>con contención</span></div>`
+      : '') +
     `</div>` +
     `<div class="scroll"><table>` +
     `<thead><tr><th>Persona</th><th>Teléfono</th><th>Estado</th><th class="num">Turnos</th>` +
@@ -99,6 +108,13 @@ export function panelCohorteHtml(r: ResumenPanel): string {
     `incluye además el registro, el cuestionario, la práctica y la certificación — un mensaje puede ` +
     `generar varios. Ambos se cuentan sobre la auditoría, que conserva ${r.retencionDias} días: un ` +
     `número bajo en alguien antiguo puede ser historial ya purgado, no inactividad.</p>` +
+    (alertadas
+      ? `<p class="aviso" style="background:#fdecea;border-left-color:#b3261e;color:#7a1a12">` +
+        `<strong>${alertadas} ${alertadas === 1 ? 'persona' : 'personas'}</strong> escribió algo que activó la ` +
+        `contención por señal de riesgo vital: ATLAS detuvo el curso y entregó las líneas de ayuda ` +
+        `(*4141*, 600 360 7777, 131). Lo que escribió NO se guarda en ninguna parte, solo el hecho. ` +
+        `Si el programa contempla seguimiento humano, estas son las filas que lo requieren.</p>`
+      : '') +
     `<p class="pie">Contiene nombres y teléfonos de personas reales. No compartir por canales abiertos ` +
     `ni subir a servicios de terceros. El correo y el RUT no aparecen acá: van cifrados y este panel ` +
     `no los consulta.</p>` +
