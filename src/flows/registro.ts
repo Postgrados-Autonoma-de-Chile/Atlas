@@ -192,6 +192,19 @@ export async function manejarRegistro(msg: InboundMessage, provider: MessagingPr
           return { handled: true };
         }
         await kvDel(KEY(msg.from));
+
+        // La memoria conversacional se BORRA al crear una persona nueva en este número.
+        //
+        // El esquema promete que un número reciclado no mezcla estudiantes: la Persona es la
+        // identidad lógica y el teléfono solo una identidad vinculada (ver migración 0002). Pero la
+        // memoria del tutor vive bajo el waId, así que sin esto la persona nueva hereda la
+        // conversación de la anterior — un error de correctitud y una fuga de datos de un tercero.
+        //
+        // También cierra el caso que lo destapó: alguien suprimido que vuelve a registrarse
+        // arrastraba el hilo viejo, y el tutor siguió media hora preguntando por un quiz que había
+        // prometido antes de que su ficha se borrara.
+        await kvDel(`mem:${msg.from}`);
+
         // Si hay curso activo se ofrece empezar de inmediato; si no, se promete el aviso. Consultar
         // acá evita el cierre muerto de la Fase 3, cuando los cursos aún no existían.
         const curso = await cursoActivo().catch(() => null);

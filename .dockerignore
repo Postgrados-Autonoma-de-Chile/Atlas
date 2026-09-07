@@ -10,6 +10,7 @@ scripts
 !scripts/reporte-cohorte.mjs
 !scripts/ingerir-contenido.ts
 !scripts/eliminar-persona.ts
+!scripts/olvidar-conversacion.ts
 docs
 *.md
 .github
