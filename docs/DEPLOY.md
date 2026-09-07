@@ -70,9 +70,9 @@ hay una imagen aparte ([`Dockerfile.tareas`](../Dockerfile.tareas)) que corre co
 proyecto, hablando con Cloud SQL por el conector: sin IP pública autorizada y con el mismo secreto
 que usa el servicio.
 
-Cuatro jobs, todos re-ejecutables. En PowerShell el continuador es `` ` `` y **`"$IMG:v2"` no
+Cuatro jobs, todos re-ejecutables. En PowerShell el continuador es `` ` `` y **`"$IMG:v4"` no
 funciona**: PowerShell lee `$IMG:` como variable con ámbito y manda el argumento vacío. Usar
-`"${IMG}:v2"`.
+`"${IMG}:v4"`.
 
 ```bash
 IMG=us-east1-docker.pkg.dev/postgrados-ua/atlas/atlas-tareas
@@ -92,8 +92,10 @@ gcloud run jobs create atlas-curriculo --image $IMG:v4 $COMUN \
   --command node --args="scripts/cargar-curriculo.mjs,--archivar-otros"
 gcloud run jobs execute atlas-curriculo --region us-east1 --wait
 
-# Job 3 — ingesta del material al RAG (necesita ademas GEMINI_API_KEY)
-gcloud run jobs create atlas-rag --image $IMG:v4 $COMUN   --set-secrets DATABASE_URL=atlas-database-url:latest,GEMINI_API_KEY=atlas-gemini-api-key:latest   --command npx --args="tsx,scripts/ingerir-contenido.ts,contenido"
+# Job 3 — ingesta del material al RAG (además de la base, necesita GEMINI_API_KEY)
+gcloud run jobs create atlas-rag --image $IMG:v4 $COMUN \
+  --set-secrets DATABASE_URL=atlas-database-url:latest,GEMINI_API_KEY=atlas-gemini-api-key:latest \
+  --command npx --args="tsx,scripts/ingerir-contenido.ts,contenido"
 gcloud run jobs execute atlas-rag --region us-east1 --wait
 
 # Job 4 — reporte de la cohorte (solo lectura, sin datos personales)
