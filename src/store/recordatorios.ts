@@ -213,3 +213,89 @@ export async function marcarFallidoPorWamid(waMessageId: string): Promise<void> 
     log.warn('recordatorios: marcarFallidoPorWamid falló', { err: String(e) });
   }
 }
+
+export type CandidatoRetomar = CandidatoRecordatorio & {
+  /** Respondió parte del cuestionario y lo dejó a medias: el aviso lo dice y retoma ahí. */
+  caracterizacionParcial: boolean;
+  /** Avanzó en una versión anterior del programa, hoy archivada. */
+  vieneDeVersionAnterior: boolean;
+};
+
+/**
+ * Personas registradas que NO están cursando: el segmento más grande de recuperables.
+ *
+ * El motor original solo miraba a quien tenía inscripción activa en el curso activo, y por eso
+ * dejaba fuera a quien se registró y nunca empezó, a quien abandonó el cuestionario a mitad, y a
+ * quien quedó colgando de un curso archivado tras una actualización del currículo. En el piloto
+ * eran 8 de 21 personas — más que las que estaban cursando.
+ *
+ * El reloj de inactividad acá NO puede ser el avance de lecciones, porque justamente no hay avance.
+ * Se usa la señal más reciente que la persona haya dado: su registro, su última respuesta del
+ * cuestionario, o su último progreso en cualquier curso, incluido uno archivado.
+ */
+export async function candidatosSinInscripcion(diasInactividad: number): Promise<CandidatoRetomar[]> {
+  const pool = getPool();
+  if (!pool) return [];
+  try {
+    const r = await pool.query(
+      `WITH activo AS (
+         SELECT id, nombre FROM course WHERE estado='activo' ORDER BY created_at LIMIT 1
+       ),
+       optin AS (
+         SELECT DISTINCT ON (person_id) person_id, otorgado
+           FROM consent WHERE tipo='recordatorios' ORDER BY person_id, ts DESC
+       ),
+       senal AS (
+         SELECT p.id AS person_id,
+                GREATEST(
+                  p.created_at,
+                  COALESCE((SELECT max(sa.respondido_en) FROM survey_answer sa WHERE sa.person_id = p.id), p.created_at),
+                  COALESCE((SELECT max(GREATEST(lp.entregado_en, lp.completado_en))
+                              FROM lesson_progress lp JOIN enrollment e2 ON e2.id = lp.enrollment_id
+                             WHERE e2.person_id = p.id), p.created_at)
+                ) AS ultima,
+                EXISTS (SELECT 1 FROM survey_answer sa WHERE sa.person_id = p.id) AS respondio_algo,
+                p.caracterizacion_completada_en IS NOT NULL AS cuestionario_ok,
+                EXISTS (SELECT 1 FROM lesson_progress lp JOIN enrollment e3 ON e3.id = lp.enrollment_id
+                         WHERE e3.person_id = p.id AND lp.estado='completada') AS avanzo_antes
+           FROM person p
+       )
+       SELECT s.person_id, pi.valor_lookup AS wa_id, p.nombre,
+              (SELECT nombre FROM activo) AS curso_nombre,
+              (s.respondio_algo AND NOT s.cuestionario_ok) AS caracterizacion_parcial,
+              s.avanzo_antes AS viene_de_version_anterior,
+              (SELECT count(*)::int FROM reminder rm
+                WHERE rm.person_id = s.person_id AND rm.tipo='retomar'
+                  AND rm.estado='enviado' AND rm.enviado_en > s.ultima) AS enviados_sin_actividad
+         FROM senal s
+         JOIN optin o ON o.person_id = s.person_id AND o.otorgado
+         JOIN person p ON p.id = s.person_id
+         JOIN person_identity pi ON pi.person_id = s.person_id AND pi.tipo='wa_id'
+        WHERE s.ultima < now() - ($1 || ' days')::interval
+          -- Sin inscripción ACTIVA en el curso ACTIVO: si ya está cursando, le corresponde el otro
+          -- recordatorio y no este.
+          AND NOT EXISTS (
+            SELECT 1 FROM enrollment e
+             WHERE e.person_id = s.person_id AND e.estado='activa'
+               AND e.course_id = (SELECT id FROM activo)
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM reminder rm2
+             WHERE rm2.person_id = s.person_id AND rm2.tipo='retomar'
+               AND (rm2.estado='programado'
+                    OR (rm2.estado='enviado' AND rm2.enviado_en > now() - ($1 || ' days')::interval))
+          )`,
+      [String(diasInactividad)],
+    );
+    return r.rows.map((row: any) => ({
+      personId: row.person_id, waId: row.wa_id, nombre: row.nombre,
+      cursoNombre: row.curso_nombre ?? 'el curso', proximaLeccion: null,
+      enviadosSinActividad: row.enviados_sin_actividad,
+      caracterizacionParcial: Boolean(row.caracterizacion_parcial),
+      vieneDeVersionAnterior: Boolean(row.viene_de_version_anterior),
+    }));
+  } catch (e) {
+    log.warn('recordatorios: candidatosSinInscripcion falló', { err: String(e) });
+    return [];
+  }
+}

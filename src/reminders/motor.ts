@@ -4,10 +4,11 @@ import { audit } from '../obs/audit';
 import { getJson } from '../store/kv';
 import { wallClock, zonedToUtc, esDiaHabil, dentroDeVentana, type CampaignAgenda } from '../campaign/calendar';
 import {
-  candidatosContinuarCurso, programarRecordatorio, pendientesDeDespacho,
+  candidatosContinuarCurso, candidatosSinInscripcion, programarRecordatorio, pendientesDeDespacho,
   reclamarParaEnvio, registrarWamid, devolverAProgramado, reprogramar, marcarEstado,
 } from '../store/recordatorios';
-import { estadoAcademico } from '../store/cursos';
+import { estadoAcademico, avancePrevioArchivado, cursoActivo } from '../store/cursos';
+import { estaCompleta, respondidas } from '../store/caracterizacion';
 import type { MessagingProvider } from '../messaging/types';
 
 // Motor de recordatorios (Fase 9). Dos etapas idempotentes que dispara Cloud Scheduler (F11) vía
@@ -63,6 +64,30 @@ export function esOptInRecordatorios(texto: string): boolean {
 }
 
 const texto = {
+  /** Quien se registró y no está cursando. El mensaje dice DÓNDE quedó, que es lo que hace que
+   *  alguien retome: "sigue tu curso" es ruido; "te faltan 6 preguntas" es una acción. */
+  retomar: (nombre: string | null, curso: string, parcial: boolean, previo: boolean) => {
+    const hola = `¡Hola${nombre ? ` ${nombre}` : ''}! 👋 Te escribo de *ATLAS* (U. Autónoma).`;
+    if (parcial) {
+      return `${hola} Dejaste a medias el cuestionario inicial y por eso tu curso no ha empezado. ` +
+        `Son alternativas y toma un par de minutos: escribe *cuestionario* y lo terminamos 🙂
+
+` +
+        `(Si prefieres no recibir recordatorios, dime "no enviar recordatorios".)`;
+    }
+    if (previo) {
+      return `${hola} El programa se actualizó al plan oficial y ahora es *${curso}*: 8 microcápsulas ` +
+        `de 5 a 7 minutos. Tu avance anterior no se traslada, así que partimos de nuevo — escribe ` +
+        `*empezar* cuando quieras 🙂
+
+(Si prefieres no recibir recordatorios, dime "no enviar recordatorios".)`;
+    }
+    return `${hola} Quedaste registrado en *${curso}* y todavía no empiezas. Son 8 microcápsulas de ` +
+      `5 a 7 minutos y puedes hacerlas a tu ritmo: escribe *empezar* y partimos 🙂
+
+` +
+      `(Si prefieres no recibir recordatorios, dime "no enviar recordatorios".)`;
+  },
   continuar: (nombre: string | null, curso: string, proxima: string | null) =>
     `¡Hola${nombre ? ` ${nombre}` : ''}! 👋 Te escribo de *ATLAS* (U. Autónoma). Quedó pendiente tu curso *${curso}*${proxima ? ` — la próxima microcápsula es *${proxima}* (5-7 min)` : ''}. ¿Retomamos? Escribe *continuar* cuando quieras 🙂\n\n(Si prefieres no recibir recordatorios, dime "no enviar recordatorios".)`,
 };
@@ -80,8 +105,22 @@ export async function planificar(now = new Date()): Promise<ResumenPlanificacion
     const cuando = proximaVentanaHabil(now);
     if (await programarRecordatorio(c.personId, 'continuar_curso', clave, cuando)) programados++;
   }
-  if (candidatos.length) log.info('recordatorios: planificación', { candidatos: candidatos.length, programados, omitidosPorTope });
-  return { candidatos: candidatos.length, programados, omitidosPorTope };
+  // Segundo segmento: registradas que NO están cursando. En el piloto eran más que las que sí
+  // cursaban, y ninguna recibía nada — el motor solo miraba inscripciones activas.
+  const sinInscripcion = await candidatosSinInscripcion(config.reminderDiasInactividad);
+  for (const c of sinInscripcion) {
+    if (c.enviadosSinActividad >= config.reminderMaxSinActividad) { omitidosPorTope++; continue; }
+    const clave = claveDedupe(c.personId, 'retomar', now, config.reminderDiasInactividad);
+    if (await programarRecordatorio(c.personId, 'retomar', clave, proximaVentanaHabil(now))) programados++;
+  }
+
+  const total = candidatos.length + sinInscripcion.length;
+  if (total) {
+    log.info('recordatorios: planificación', {
+      cursando: candidatos.length, sinInscripcion: sinInscripcion.length, programados, omitidosPorTope,
+    });
+  }
+  return { candidatos: total, programados, omitidosPorTope };
 }
 
 export type ResumenDespacho = { pendientes: number; enviados: number; reprogramados: number; fallidos: number; omitidos: number; cancelados: number };
@@ -97,7 +136,15 @@ export async function despachar(provider: MessagingProvider, now = new Date()): 
     // "quedó pendiente tu curso" sería falso → cancelar; si recae, la planificación lo re-crea.
     const estado = await estadoAcademico(rm.personId);
     const ultIn = await getJson<{ t: number }>(`ult_in:${rm.waId}`);
-    if (!estado?.inscrito || estado.enrollment?.estado !== 'activa' || (ultIn && ultIn.t > rm.programadoPara.getTime())) {
+    const cursando = Boolean(estado?.inscrito && estado.enrollment?.estado === 'activa');
+
+    // Escribió después de que se programó: ya volvió por su cuenta y el recordatorio sobra.
+    // Y cada tipo se cancela por la razón OPUESTA: 'continuar_curso' si dejó de estar cursando,
+    // 'retomar' si empezó a cursar. Para este último, NO estar inscrito es el motivo del aviso, no
+    // una condición de cancelación — invertir esto dejaría el segmento entero sin recibir nada.
+    const yaVolvio = Boolean(ultIn && ultIn.t > rm.programadoPara.getTime());
+    const yaNoAplica = rm.tipo === 'retomar' ? cursando : !cursando;
+    if (yaVolvio || yaNoAplica) {
       await marcarEstado(rm.id, 'cancelado');
       resumen.cancelados++;
       continue;
@@ -125,7 +172,18 @@ export async function despachar(provider: MessagingProvider, now = new Date()): 
     // segundo envío. Perder un recordatorio ante un fallo raro es aceptable; duplicarlo, no.
     if (!(await reclamarParaEnvio(rm.id))) continue;
 
-    const cuerpo = texto.continuar(rm.nombre, estado.curso?.nombre ?? 'tu curso', estado.proxima?.titulo ?? null);
+    let cuerpo: string;
+    if (rm.tipo === 'retomar') {
+      // El estado se recalcula al enviar y no se guarda en la fila: entre que se programó y se
+      // despacha la persona pudo terminar el cuestionario, y el mensaje quedaría diciendo algo falso.
+      const [completa, hechas, previo, curso] = await Promise.all([
+        estaCompleta(rm.personId), respondidas(rm.personId),
+        avancePrevioArchivado(rm.personId), cursoActivo(),
+      ]);
+      cuerpo = texto.retomar(rm.nombre, curso?.nombre ?? 'el curso', hechas > 0 && !completa, Boolean(previo));
+    } else {
+      cuerpo = texto.continuar(rm.nombre, estado!.curso?.nombre ?? 'tu curso', estado!.proxima?.titulo ?? null);
+    }
     const envio = abierta
       ? await provider.enviarTexto(rm.waId, cuerpo)
       : await provider.enviarPlantilla(rm.waId, config.waTemplateRecordatorio, config.waTemplateLang, [rm.nombre ?? 'estudiante']);

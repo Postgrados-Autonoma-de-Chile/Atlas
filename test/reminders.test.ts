@@ -22,12 +22,19 @@ const ESTADO_ACTIVO = {
   proxima: { orden: 3, titulo: 'Asistentes conversacionales', tipo: 'capsula', duracionMin: 6 },
 };
 
+/** Segundo segmento: registradas que no están cursando. */
+let sinInscripcion: any[] = [];
+let caracterizacionCompleta = true;
+let respondidasSim = 0;
+let avancePrevio: any = null;
+
 mock.module('../src/store/db.ts', {
   namedExports: { dbEnabled: () => true, dbInsertAudit: async () => {}, getPool: () => null },
 });
 mock.module('../src/store/recordatorios.ts', {
   namedExports: {
     candidatosContinuarCurso: async () => candidatos,
+    candidatosSinInscripcion: async () => sinInscripcion,
     programarRecordatorio: async (personId: string, tipo: string, clave: string, cuando: Date) => {
       if ([...rms.values()].some((r) => r.clave === clave)) return false; // UNIQUE clave_dedupe
       const id = 'rm' + ++idSeq;
@@ -59,9 +66,18 @@ mock.module('../src/store/recordatorios.ts', {
     marcarFallidoPorWamid: async () => {},
   },
 });
+mock.module('../src/store/caracterizacion.ts', {
+  namedExports: {
+    estaCompleta: async () => caracterizacionCompleta,
+    respondidas: async () => respondidasSim,
+    totalPreguntas: async () => 11,
+  },
+});
 mock.module('../src/store/cursos.ts', {
   namedExports: {
-    cursoActivo: async () => null,
+    avancePrevioArchivado: async () => avancePrevio,
+    frasePrevio: () => '',
+    cursoActivo: async () => ({ id: 'c1', codigo: 'NIVEL-1', nombre: 'Nivel Inicial: Alfabetización ciudadana en IA', descripcion: null, duracionMin: 55 }),
     inscribir: async () => null,
     estadoAcademico: async () => estadoAcad,
     entregarLeccionActual: async () => null,
@@ -100,6 +116,10 @@ function fakeProvider(fallar = false) {
 const reset = () => {
   rms.clear();
   estadoAcad = structuredClone(ESTADO_ACTIVO);
+  sinInscripcion = [];
+  caracterizacionCompleta = true;
+  respondidasSim = 0;
+  avancePrevio = null;
   candidatos = [{ personId: 'p1', waId: '+56900050001', nombre: 'Rodrigo', cursoNombre: 'C', proximaLeccion: null, enviadosSinActividad: 0 }];
 };
 
@@ -226,4 +246,114 @@ test('despachar: fallo del proveedor devuelve a programado (intentos) y al terce
   assert.equal(r.fallidos, 1);
   assert.equal(rm.estado, 'fallido');
   await kvDel('ult_in:+56900050001');
+});
+
+// ── Registradas que NO están cursando ───────────────────────────────────────
+//
+// El motor solo miraba inscripciones activas, y por eso el segmento más grande de recuperables no
+// recibía nada: en el piloto eran 8 de 21 personas — más que las que estaban cursando. Quien se
+// registró y nunca empezó, quien dejó el cuestionario a medias, y quien quedó colgando de un curso
+// archivado tras actualizar el currículo.
+
+const sin = (over: any = {}) => ({
+  personId: 'p9', waId: '+56911112222', nombre: 'Ana', cursoNombre: 'Nivel Inicial',
+  proximaLeccion: null, enviadosSinActividad: 0,
+  caracterizacionParcial: false, vieneDeVersionAnterior: false, ...over,
+});
+
+test('se programa recordatorio a quien se registró y no está cursando', async () => {
+  reset();
+  candidatos = [];
+  sinInscripcion = [sin()];
+  const r = await planificar(LUNES_MEDIODIA);
+  assert.equal(r.candidatos, 1);
+  assert.equal(r.programados, 1);
+  assert.equal([...rms.values()][0].tipo, 'retomar', 'usa su propio tipo, con su propio tope');
+});
+
+test('NO se cancela por no estar inscrita: es justamente el motivo del aviso', async () => {
+  // El despachador cancelaba todo lo que no tuviera inscripción activa. Con esa regla, este
+  // segmento entero se habría cancelado en silencio y nadie habría notado que no llega nada.
+  reset();
+  candidatos = [];
+  sinInscripcion = [sin()];
+  estadoAcad = { inscrito: false };
+  await planificar(LUNES_MEDIODIA);
+  const rm = [...rms.values()][0];
+  rm.programadoPara = FUTURO();
+  await setJson('ult_in:+56900050001', { t: Date.now() }, 3600);
+  const { p, textos } = fakeProvider();
+  const d = await despachar(p, LUNES_MEDIODIA);
+  assert.equal(d.cancelados, 0);
+  assert.equal(d.enviados, 1);
+  assert.match(textos[0], /todavía no empiezas/i);
+});
+
+test('si ya empezó a cursar, ese recordatorio se cancela', async () => {
+  reset();
+  candidatos = [];
+  sinInscripcion = [sin()];
+  await planificar(LUNES_MEDIODIA);
+  estadoAcad = { inscrito: true, enrollment: { id: 'e1', estado: 'activa', minutosAcumulados: 0 },
+                 curso: { id: 'c1', codigo: 'X', nombre: 'Nivel Inicial', duracionMin: 55 },
+                 totalLecciones: 8, completadas: 0 };
+  const { p } = fakeProvider();
+  const d = await despachar(p, LUNES_MEDIODIA);
+  assert.equal(d.cancelados, 1, 'volvió por su cuenta: el aviso sobra');
+  assert.equal(d.enviados, 0);
+});
+
+test('el mensaje dice DÓNDE quedó: cuestionario a medias', async () => {
+  // "Sigue tu curso" es ruido. "Te faltan preguntas del cuestionario" es una acción.
+  reset();
+  candidatos = [];
+  sinInscripcion = [sin()];
+  estadoAcad = { inscrito: false };
+  caracterizacionCompleta = false;
+  respondidasSim = 5;
+  await planificar(LUNES_MEDIODIA);
+  const rm = [...rms.values()][0];
+  rm.programadoPara = FUTURO();
+  await setJson('ult_in:+56900050001', { t: Date.now() }, 3600);
+  const { p, textos } = fakeProvider();
+  await despachar(p, LUNES_MEDIODIA);
+  assert.match(textos[0], /cuestionario/i);
+  caracterizacionCompleta = true; respondidasSim = 0;
+});
+
+test('a quien venía de la versión anterior se le explica el cambio', async () => {
+  reset();
+  candidatos = [];
+  sinInscripcion = [sin()];
+  estadoAcad = { inscrito: false };
+  avancePrevio = { curso: 'IA en la vida cotidiana', completadas: 3, total: 9, folio: null };
+  await planificar(LUNES_MEDIODIA);
+  const rm = [...rms.values()][0];
+  rm.programadoPara = FUTURO();
+  await setJson('ult_in:+56900050001', { t: Date.now() }, 3600);
+  const { p, textos } = fakeProvider();
+  await despachar(p, LUNES_MEDIODIA);
+  assert.match(textos[0], /se actualizó/i);
+  assert.match(textos[0], /no se traslada/i, 'sin prometer que se recupera el avance');
+  avancePrevio = null;
+});
+
+test('el tope de insistencia también aplica a este segmento', async () => {
+  reset();
+  candidatos = [];
+  sinInscripcion = [sin({ enviadosSinActividad: 3 })];
+  const r = await planificar(LUNES_MEDIODIA);
+  assert.equal(r.programados, 0);
+  assert.equal(r.omitidosPorTope, 1);
+});
+
+test('los dos segmentos conviven y se cuentan juntos', async () => {
+  reset();
+  sinInscripcion = [sin({ personId: 'p9' })];
+  const r = await planificar(LUNES_MEDIODIA);
+  assert.equal(r.candidatos, candidatos.length + 1);
+  assert.equal(r.programados, candidatos.length + 1);
+  const tipos = [...rms.values()].map((x) => x.tipo).sort();
+  assert.ok(tipos.includes('retomar') && tipos.includes('continuar_curso'));
+  sinInscripcion = [];
 });
