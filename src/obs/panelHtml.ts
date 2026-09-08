@@ -1,4 +1,4 @@
-import type { ResumenPanel, FilaPanel } from '../store/panel';
+import type { ResumenPanel, FilaPanel, PreguntaAgregada, PaginaCaracterizacion } from '../store/panel';
 
 // Render del panel de cohorte. HTML autocontenido, sin dependencias externas: se abre desde un
 // archivo guardado en el disco de quien lo pidió y funciona sin red.
@@ -53,6 +53,26 @@ export const PANEL_CSS = `
       .num{text-align:right;font-variant-numeric:tabular-nums}
       .aviso{margin:1.2rem 0 0;padding:.7rem .9rem;background:#fff8e6;border-left:3px solid #d4a017;border-radius:4px;font-size:.8rem;color:#5a4a00}
       .pie{margin:1rem 0 0;font-size:.75rem;color:#8a8a8a}
+      .preguntas{display:grid;gap:1.1rem;margin:1rem 0 0}
+      @media(min-width:60rem){.preguntas{grid-template-columns:1fr 1fr}}
+      .preg{border:1px solid #ececf0;border-radius:6px;padding:.85rem 1rem}
+      .preg h3{margin:0 0 .6rem;font-size:.85rem;font-weight:600;line-height:1.35;display:flex;gap:.5rem;align-items:baseline}
+      .preg-n{display:inline-flex;align-items:center;justify-content:center;min-width:1.25rem;height:1.25rem;border-radius:3px;background:#eceef5;color:#273473;font-size:.68rem;font-weight:700;flex:none}
+      .ops{display:grid;gap:.28rem}
+      .op{display:grid;grid-template-columns:minmax(6rem,1fr) 5rem 3rem 2.4rem;gap:.5rem;align-items:center;font-size:.78rem}
+      .op-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .op-barra{background:#eceef5;border-radius:2px;height:.5rem;overflow:hidden}
+      .op-barra i{display:block;height:100%;background:#273473;border-radius:2px}
+      .op-n,.op-pct{text-align:right;font-family:ui-monospace,monospace;font-size:.72rem;font-variant-numeric:tabular-nums}
+      .op-pct{color:#667}
+      .detalle-tit{margin:2rem 0 .6rem;font-size:1.05rem;font-weight:600}
+      table.detalle th{font-size:.62rem}
+      table.detalle td{font-size:.8rem}
+      .mas-wrap{margin:.9rem 0 0}
+      .mas{padding:.5rem 1rem;border:1px solid #273473;border-radius:6px;background:transparent;color:#273473;font-size:.85rem;font-weight:600;cursor:pointer;font-family:inherit}
+      .mas:hover{background:#eceef5}
+      .mas[disabled]{opacity:.5;cursor:default}
+      .fin{margin:.9rem 0 0;font-size:.78rem;color:#8a8a8a}
       .alerta{display:inline-block;margin-left:.35rem;padding:.05rem .35rem;border-radius:4px;background:#fdecea;color:#b3261e;font-size:.7rem;font-weight:600;vertical-align:middle}
     `;
 
@@ -158,6 +178,9 @@ export function panelAccesoHtml(refrescoSeg = 60): string {
       .barra{max-width:78rem;margin:0 auto .8rem;display:flex;align-items:center;gap:.75rem;font-size:.8rem;color:#667}
       .barra button{background:#eceef5;color:#273473}
       .err{color:#b3261e;font-size:.85rem;margin:.4rem 0 0}
+      .barra .tab{background:transparent;color:#667;border:1px solid transparent;font-weight:600}
+      .barra .tab.activa{background:#273473;color:#fff}
+      #estado{margin-left:auto}
     </style>` +
     `<body>` +
     `<div id="acceso" class="acceso" hidden>` +
@@ -169,14 +192,17 @@ export function panelAccesoHtml(refrescoSeg = 60): string {
     `<p class="pie">El token se guarda solo en esta pestaña y se borra al cerrarla.</p>` +
     `</div>` +
     `<div id="vista" hidden>` +
-    `<div class="barra"><span id="estado">cargando…</span>` +
+    `<div class="barra">` +
+    `<button class="tab activa" type="button" data-ruta="/panel/cohorte">Cohorte</button>` +
+    `<button class="tab" type="button" data-ruta="/panel/caracterizacion">Caracterización</button>` +
+    `<span id="estado">cargando…</span>` +
     `<button id="recargar" type="button">Actualizar</button>` +
     `<button id="salir" type="button">Salir</button></div>` +
     `<div class="caja" id="contenido"></div>` +
     `</div>` +
     `<script>
 (function(){
-  var CLAVE='atlas.panel.token', REFRESCO=${refrescoSeg}*1000;
+  var CLAVE='atlas.panel.token', REFRESCO=${refrescoSeg}*1000, RUTA='/panel/cohorte';
   var acceso=document.getElementById('acceso'), vista=document.getElementById('vista');
   var err=document.getElementById('err'), estado=document.getElementById('estado');
   var timer=null;
@@ -192,7 +218,7 @@ export function panelAccesoHtml(refrescoSeg = 60): string {
     var tk=guardado();
     if(!tk){ pedirToken(); return; }
     estado.textContent='actualizando…';
-    fetch('/panel/cohorte?vista=fragmento',{headers:{'x-dashboard-token':tk},cache:'no-store'})
+    fetch(RUTA+'?vista=fragmento',{headers:{'x-dashboard-token':tk},cache:'no-store'})
       .then(function(r){
         if(r.status===401) throw new Error('token');
         if(!r.ok) throw new Error('http '+r.status);
@@ -217,10 +243,113 @@ export function panelAccesoHtml(refrescoSeg = 60): string {
     try{sessionStorage.setItem(CLAVE,v);}catch(e){ pedirToken('Este navegador no permite guardar el token.'); return; }
     cargar();
   });
+  Array.prototype.forEach.call(document.querySelectorAll('.tab'),function(b){
+    b.addEventListener('click',function(){
+      Array.prototype.forEach.call(document.querySelectorAll('.tab'),function(x){x.classList.remove('activa');});
+      b.classList.add('activa');
+      RUTA=b.getAttribute('data-ruta');
+      if(timer){clearInterval(timer);timer=null;}
+      cargar();
+    });
+  });
+  // "Cargar más": pide SOLO las filas siguientes con el cursor y las agrega al final. No se
+  // recalcula el agregado, que es la consulta cara.
+  document.getElementById('contenido').addEventListener('click',function(ev){
+    var b=ev.target.closest ? ev.target.closest('.mas') : null;
+    if(!b) return;
+    var tk=guardado(); if(!tk) return pedirToken();
+    b.disabled=true; b.textContent='Cargando…';
+    fetch('/panel/caracterizacion?cursor='+encodeURIComponent(b.getAttribute('data-cursor')),
+          {headers:{'x-dashboard-token':tk},cache:'no-store'})
+      .then(function(r){ if(r.status===401) throw new Error('token'); return r.text(); })
+      .then(function(html){
+        var m=html.match(/<!--CURSOR:([^>]*)-->/);
+        var cursor=m?m[1]:'';
+        var tbody=document.querySelector('table.detalle tbody');
+        if(tbody) tbody.insertAdjacentHTML('beforeend', html.replace(/<!--CURSOR:[^>]*-->/,''));
+        if(cursor){ b.setAttribute('data-cursor',cursor); b.disabled=false; b.textContent='Cargar 50 más'; }
+        else { b.parentNode.innerHTML='<p class="fin">No hay más registros.</p>'; }
+      })
+      .catch(function(e){
+        if(e.message==='token') return pedirToken('Ese token no es válido.');
+        b.disabled=false; b.textContent='Reintentar';
+      });
+  });
   document.getElementById('recargar').addEventListener('click',cargar);
   document.getElementById('salir').addEventListener('click',function(){ pedirToken(); });
   cargar();
 })();
     </script></body>`
+  );
+}
+
+/** Barra de proporción para una alternativa del cuestionario. */
+function barraOpcion(o: { texto: string; n: number; pct: number }): string {
+  const ancho = Math.max(o.pct, o.n > 0 ? 1.5 : 0);
+  return (
+    `<div class="op">` +
+    `<span class="op-txt">${escapar(o.texto)}</span>` +
+    `<span class="op-barra"><i style="width:${ancho.toFixed(1)}%"></i></span>` +
+    `<span class="op-n">${o.n.toLocaleString('es-CL')}</span>` +
+    `<span class="op-pct">${o.pct.toFixed(0)} %</span>` +
+    `</div>`
+  );
+}
+
+/**
+ * Vista de caracterización: primero el agregado —que es para lo que existe el cuestionario— y
+ * debajo el detalle por persona, paginado.
+ */
+export function caracterizacionHtml(
+  agregado: PreguntaAgregada[], pagina: PaginaCaracterizacion, cacheado: boolean,
+): string {
+  const respondieron = agregado[0]?.respondieron ?? 0;
+
+  const preguntas = agregado
+    .map((p) =>
+      `<section class="preg">` +
+      `<h3><span class="preg-n">${p.orden}</span>${escapar(p.enunciado)}</h3>` +
+      `<div class="ops">${p.opciones.map(barraOpcion).join('')}</div>` +
+      `</section>`,
+    )
+    .join('');
+
+  return (
+    `<h1>Caracterización</h1>` +
+    `<p class="sub">${respondieron.toLocaleString('es-CL')} personas completaron las ` +
+    `${agregado.length} preguntas${cacheado ? ' · agregado desde caché, se recalcula cada 5 min' : ''}</p>` +
+    `<div class="preguntas">${preguntas || '<p>Sin respuestas todavía.</p>'}</div>` +
+    `<h2 class="detalle-tit">Respuesta por persona</h2>` +
+    `<div id="tabla-detalle">${filasDetalleHtml(pagina, true)}</div>`
+  );
+}
+
+/**
+ * Filas del detalle. Se renderiza aparte porque el botón "cargar más" pide solo esto y lo agrega
+ * al final: traer de nuevo el agregado en cada página sería pagar la consulta cara por nada.
+ */
+export function filasDetalleHtml(pagina: PaginaCaracterizacion, conCabecera: boolean): string {
+  const filas = pagina.filas
+    .map((f) =>
+      `<tr><td><strong>${escapar(f.nombre)}</strong></td>` +
+      `<td class="mono">${escapar(f.waId)}</td>` +
+      `<td class="mono">${escapar(fecha(f.completadaEn))}</td>` +
+      pagina.columnas.map((c) => `<td>${escapar(f.respuestas[c.codigo] ?? '—')}</td>`).join('') +
+      `</tr>`,
+    )
+    .join('');
+
+  const boton = pagina.siguiente
+    ? `<div class="mas-wrap"><button class="mas" type="button" data-cursor="${escapar(pagina.siguiente)}">Cargar 50 más</button></div>`
+    : `<p class="fin">No hay más registros.</p>`;
+
+  if (!conCabecera) return filas + `<!--CURSOR:${pagina.siguiente ?? ''}-->`;
+
+  return (
+    `<div class="scroll"><table class="detalle"><thead><tr>` +
+    `<th>Persona</th><th>Teléfono</th><th>Completó</th>` +
+    pagina.columnas.map((c) => `<th title="${escapar(c.enunciado)}">${escapar(c.codigo)}</th>`).join('') +
+    `</tr></thead><tbody>${filas || '<tr><td colspan="14">Nadie ha completado el cuestionario.</td></tr>'}</tbody>` +
+    `</table></div>${boton}`
   );
 }

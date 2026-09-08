@@ -11,8 +11,8 @@ import { dbResumenNegocio } from './store/metricasNegocio';
 import { kvKind, kvVivo, once } from './store/kv';
 import { verificarPorFolio } from './store/certificados';
 import { requireDashboardToken } from './routes/guard';
-import { panelCohorte } from './store/panel';
-import { panelCohorteHtml, panelAccesoHtml } from './obs/panelHtml';
+import { panelCohorte, caracterizacionAgregada, caracterizacionPagina } from './store/panel';
+import { panelCohorteHtml, panelAccesoHtml, caracterizacionHtml, filasDetalleHtml } from './obs/panelHtml';
 import { rateLimit } from './routes/rateLimit';
 import { planificar, despachar } from './reminders/motor';
 import { messagingProvider } from './messaging';
@@ -149,6 +149,27 @@ app.get('/panel/cohorte', strictLimiter, requireDashboardToken, async (req, res)
   res.setHeader('Cache-Control', 'no-store');
   if (!r) return res.status(503).send('<!doctype html><meta charset="utf-8">Base de datos no disponible.');
   res.type('html').send(panelCohorteHtml(r, req.query.vista === 'fragmento'));
+});
+
+// Respuestas del cuestionario de caracterización.
+//
+// Dos consultas con costos muy distintos, y la ruta lo refleja: el AGREGADO se cachea porque
+// recorre toda la tabla, y el DETALLE se pagina por keyset. Con `?cursor=` devuelve SOLO las filas
+// siguientes —sin recalcular el agregado— para que "cargar más" cueste una página y no un informe.
+app.get('/panel/caracterizacion', strictLimiter, requireDashboardToken, async (req, res) => {
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  res.setHeader('Cache-Control', 'no-store');
+  const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : null;
+
+  if (cursor) {
+    const pagina = await caracterizacionPagina(cursor, 50);
+    if (!pagina) return res.status(503).send('Base de datos no disponible.');
+    return res.type('html').send(filasDetalleHtml(pagina, false));
+  }
+
+  const [agregado, pagina] = await Promise.all([caracterizacionAgregada(), caracterizacionPagina(null, 50)]);
+  if (!agregado || !pagina) return res.status(503).send('Base de datos no disponible.');
+  res.type('html').send(caracterizacionHtml(agregado, pagina, false));
 });
 
 // Webhook de WhatsApp Cloud API: GET = handshake de verificación (Meta lo llama al suscribir);

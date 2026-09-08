@@ -1,4 +1,5 @@
 import { getPool } from './db';
+import { getJson, setJson } from './kv';
 import { log } from '../log';
 
 // Panel operativo de la cohorte: quién está, cuánto conversó y cuándo.
@@ -109,6 +110,169 @@ export async function panelCohorte(retencionDias: number): Promise<ResumenPanel 
     };
   } catch (e) {
     log.warn('panel: panelCohorte falló', { err: String(e) });
+    return null;
+  }
+}
+
+// ── Caracterización ─────────────────────────────────────────────────────────
+//
+// Dos vistas con costos muy distintos a escala de programa, y por eso se resuelven distinto.
+//
+// El AGREGADO es para lo que existe el cuestionario —«orientar la oferta formativa»— y con 200.000
+// personas recorre 2,2 millones de respuestas. Es una consulta cara para repetirla en cada carga de
+// pantalla, pero su resultado cambia lentamente: se cachea en Redis unos minutos.
+//
+// El DETALLE se pagina por KEYSET y nunca con OFFSET. Un `OFFSET 100000` obliga a Postgres a leer y
+// descartar cien mil filas antes de devolver la página, y el costo crece con el número de página;
+// el keyset lee siempre solo las que se van a mostrar. Y las respuestas se traen únicamente de las
+// personas de la página, con `WHERE person_id = ANY(...)`, así que ninguna consulta escala con el
+// tamaño del padrón.
+
+export type OpcionAgregada = { texto: string; n: number; pct: number };
+export type PreguntaAgregada = {
+  orden: number; codigo: string; enunciado: string; respondieron: number; opciones: OpcionAgregada[];
+};
+
+export type PersonaCaracterizada = {
+  personId: string;
+  nombre: string;
+  waId: string;
+  completadaEn: Date;
+  /** Respuesta por código de pregunta ('edad' → '25–34 años'). */
+  respuestas: Record<string, string>;
+};
+
+export type PaginaCaracterizacion = {
+  filas: PersonaCaracterizada[];
+  /** Cursor de la página siguiente, o null si esta era la última. */
+  siguiente: string | null;
+  columnas: { codigo: string; enunciado: string }[];
+};
+
+const CACHE_AGREGADO = 'panel:caracterizacion:agregado';
+const CACHE_TTL = 300; // 5 minutos: el agregado cambia lento y la consulta es la cara
+
+/** Distribución de respuestas por pregunta. Cacheada: es la consulta que recorre toda la tabla. */
+export async function caracterizacionAgregada(): Promise<PreguntaAgregada[] | null> {
+  const cacheado = await getJson<PreguntaAgregada[]>(CACHE_AGREGADO);
+  if (cacheado) return cacheado;
+
+  const pool = getPool();
+  if (!pool) return null;
+  try {
+    const r = await pool.query(
+      `SELECT q.orden, q.codigo, q.enunciado, o.orden AS op_orden, o.texto,
+              count(a.id)::int AS n
+         FROM survey_question q
+         JOIN survey_option o ON o.question_id = q.id
+         LEFT JOIN survey_answer a ON a.option_id = o.id
+        WHERE q.estado = 'activo'
+        GROUP BY q.orden, q.codigo, q.enunciado, o.orden, o.texto
+        ORDER BY q.orden, o.orden`,
+    );
+    const porPregunta = new Map<number, PreguntaAgregada>();
+    for (const f of r.rows) {
+      let p = porPregunta.get(f.orden);
+      if (!p) {
+        p = { orden: f.orden, codigo: f.codigo, enunciado: f.enunciado, respondieron: 0, opciones: [] };
+        porPregunta.set(f.orden, p);
+      }
+      p.opciones.push({ texto: f.texto, n: f.n, pct: 0 });
+      p.respondieron += f.n;
+    }
+    const salida = [...porPregunta.values()].map((p) => ({
+      ...p,
+      // Redondeado a un decimal: nada necesita más precisión, y así el ruido de coma flotante
+      // (55,00000000000001) no viaja al caché ni al HTML.
+      opciones: p.opciones.map((o) => ({
+        ...o, pct: p.respondieron ? Math.round((o.n / p.respondieron) * 1000) / 10 : 0,
+      })),
+    }));
+    await setJson(CACHE_AGREGADO, salida, CACHE_TTL);
+    return salida;
+  } catch (e) {
+    log.warn('panel: caracterizacionAgregada falló', { err: String(e) });
+    return null;
+  }
+}
+
+const TOPE_PAGINA = 100;
+
+/** Cursor opaco: fecha ISO y uuid, que es el orden exacto del índice parcial de person. */
+function partirCursor(cursor: string | null): { ts: string; id: string } | null {
+  if (!cursor) return null;
+  const i = cursor.indexOf('|');
+  if (i < 0) return null;
+  const ts = cursor.slice(0, i);
+  const id = cursor.slice(i + 1);
+  if (!/^[0-9a-f-]{36}$/i.test(id) || Number.isNaN(Date.parse(ts))) return null;
+  return { ts, id };
+}
+
+/** Una página de personas con su cuestionario, ordenada por fecha de término descendente. */
+export async function caracterizacionPagina(
+  cursor: string | null, limite = 50,
+): Promise<PaginaCaracterizacion | null> {
+  const pool = getPool();
+  if (!pool) return null;
+  const n = Math.min(Math.max(1, Math.trunc(limite)), TOPE_PAGINA);
+  const desde = partirCursor(cursor);
+  try {
+    const cols = await pool.query(
+      `SELECT codigo, enunciado FROM survey_question WHERE estado='activo' ORDER BY orden`,
+    );
+
+    // Se piden n+1 para saber si hay página siguiente sin contar el total: un COUNT(*) sobre el
+    // padrón completo costaría más que la página misma.
+    const gente = await pool.query(
+      `SELECT p.id, p.nombre, p.apellido, p.caracterizacion_completada_en AS completada,
+              i.valor_lookup AS wa_id
+         FROM person p
+         JOIN person_identity i ON i.person_id = p.id AND i.tipo = 'wa_id'
+        WHERE p.caracterizacion_completada_en IS NOT NULL
+          ${desde ? 'AND (p.caracterizacion_completada_en, p.id) < ($2::timestamptz, $3::uuid)' : ''}
+        ORDER BY p.caracterizacion_completada_en DESC, p.id DESC
+        LIMIT $1`,
+      desde ? [n + 1, desde.ts, desde.id] : [n + 1],
+    );
+
+    const hayMas = gente.rows.length > n;
+    const pagina = hayMas ? gente.rows.slice(0, n) : gente.rows;
+    if (!pagina.length) {
+      return { filas: [], siguiente: null, columnas: cols.rows };
+    }
+
+    // Solo las respuestas de esta página: acotado por diseño, no por suerte.
+    const ids = pagina.map((f: any) => f.id);
+    const resp = await pool.query(
+      `SELECT a.person_id, q.codigo, o.texto
+         FROM survey_answer a
+         JOIN survey_question q ON q.id = a.question_id
+         JOIN survey_option o ON o.id = a.option_id
+        WHERE a.person_id = ANY($1::uuid[])`,
+      [ids],
+    );
+    const porPersona = new Map<string, Record<string, string>>();
+    for (const f of resp.rows) {
+      const m = porPersona.get(f.person_id) ?? {};
+      m[f.codigo] = f.texto;
+      porPersona.set(f.person_id, m);
+    }
+
+    const ultima = pagina[pagina.length - 1];
+    return {
+      filas: pagina.map((f: any) => ({
+        personId: f.id,
+        nombre: [f.nombre, f.apellido].filter(Boolean).join(' ') || '(sin nombre)',
+        waId: f.wa_id,
+        completadaEn: f.completada,
+        respuestas: porPersona.get(f.id) ?? {},
+      })),
+      siguiente: hayMas ? `${new Date(ultima.completada).toISOString()}|${ultima.id}` : null,
+      columnas: cols.rows,
+    };
+  } catch (e) {
+    log.warn('panel: caracterizacionPagina falló', { err: String(e) });
     return null;
   }
 }
