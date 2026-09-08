@@ -85,7 +85,9 @@ export function payloadDocumento(to: string, urlOMediaId: string, filename: stri
 export function normalizarEntrante(body: any): InboundEvent {
   const messages: InboundMessage[] = [];
   const statuses: InboundStatus[] = [];
+  const wabaIds = new Set<string>();
   for (const entry of body?.entry ?? []) {
+    if (entry?.id) wabaIds.add(String(entry.id));
     for (const change of entry?.changes ?? []) {
       const value = change?.value;
       if (!value || value.messaging_product !== 'whatsapp') continue;
@@ -137,7 +139,7 @@ export function normalizarEntrante(body: any): InboundEvent {
       }
     }
   }
-  return { messages, statuses };
+  return { messages, statuses, wabaIds: [...wabaIds] };
 }
 
 // ── Provider ──────────────────────────────────────────────────────────────────

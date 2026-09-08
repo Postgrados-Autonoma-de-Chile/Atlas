@@ -50,6 +50,10 @@ export type InboundStatus = {
 export type InboundEvent = {
   messages: InboundMessage[];
   statuses: InboundStatus[];
+  /** Ids de las cuentas de WhatsApp Business que originaron el evento (entry[].id).
+   *  Un webhook se configura por APP: una app suscrita a varias cuentas recibe el tráfico de
+   *  TODAS, así que esto dice de cuál llegó cada lote. */
+  wabaIds: string[];
 };
 
 export type BotonOpcion = { id: string; titulo: string };

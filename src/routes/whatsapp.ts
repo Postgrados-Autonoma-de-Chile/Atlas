@@ -83,6 +83,16 @@ export function metaWebhook(req: Request, res: Response) {
   const evento = normalizarEntrante(req.body ?? {});
   const provider = messagingProvider();
 
+  // La cuenta de WhatsApp Business que originó el lote se registra UNA vez por id: es el dato que
+  // hace falta para administrar plantillas por API y no está en ninguna otra parte accesible con
+  // este token. Además deja ver a cuántas cuentas está suscrita la app, que es cómo se descubrió
+  // que llega tráfico de un número ajeno al piloto.
+  for (const waba of evento.wabaIds) {
+    void once(`waba:visto:${waba}`, 30 * 24 * 3600).then((primero) => {
+      if (primero) log.info('whatsapp: WABA emisora', { wabaId: waba, aPhoneNumberId: evento.messages[0]?.aPhoneNumberId ?? evento.statuses[0]?.recipient ?? null });
+    }).catch(() => {});
+  }
+
   procesarEstados(evento.statuses);
 
   encolarMensajes(evento.messages, provider, requestId);

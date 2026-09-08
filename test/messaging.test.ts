@@ -112,8 +112,8 @@ test('normalizarEntrante: texto + interactivo + status en un mismo webhook', () 
 });
 
 test('normalizarEntrante: body ajeno o vacío → evento vacío (no revienta)', () => {
-  assert.deepEqual(normalizarEntrante({}), { messages: [], statuses: [] });
-  assert.deepEqual(normalizarEntrante({ entry: [{ changes: [{ value: { messaging_product: 'otro' } }] }] }), { messages: [], statuses: [] });
+  assert.deepEqual(normalizarEntrante({}), { messages: [], statuses: [], wabaIds: [] });
+  assert.deepEqual(normalizarEntrante({ entry: [{ changes: [{ value: { messaging_product: 'otro' } }] }] }), { messages: [], statuses: [], wabaIds: [] });
 });
 
 test('provider sin configurar: enviarTexto se omite sin tocar la red', async () => {
@@ -122,4 +122,22 @@ test('provider sin configurar: enviarTexto se omite sin tocar la red', async () 
   const r = await p.enviarTexto('+56912345678', 'hola');
   assert.equal(r.ok, false);
   assert.equal(r.skipped, true);
+});
+
+test('el webhook expone la cuenta de WhatsApp Business que originó el lote', () => {
+  // entry[].id ES el WABA ID, y era el único dato que faltaba para administrar plantillas por API:
+  // el token del piloto no tiene permiso para descubrirlo por ninguna otra vía.
+  const ev = normalizarEntrante({
+    entry: [
+      { id: '111122223333444', changes: [{ value: { messaging_product: 'whatsapp', metadata: { phone_number_id: '999' }, messages: [{ id: 'wamid.1', from: '56912345678', timestamp: '1757000000', type: 'text', text: { body: 'hola' } }] } }] },
+      { id: '555566667777888', changes: [{ value: { messaging_product: 'whatsapp', metadata: { phone_number_id: '888' }, statuses: [] } }] },
+    ],
+  });
+  assert.deepEqual(ev.wabaIds, ['111122223333444', '555566667777888'], 'una app suscrita a varias cuentas recibe el tráfico de todas');
+  assert.equal(ev.messages.length, 1);
+});
+
+test('sin entry.id no se inventa un WABA', () => {
+  const ev = normalizarEntrante({ entry: [{ changes: [{ value: { messaging_product: 'whatsapp' } }] }] });
+  assert.deepEqual(ev.wabaIds, []);
 });

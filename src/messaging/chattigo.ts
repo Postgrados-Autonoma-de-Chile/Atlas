@@ -208,13 +208,13 @@ const ESTADOS: Record<string, InboundStatus['status']> = {
 export function normalizarEntranteChattigo(body: any): InboundEvent {
   const messages: InboundMessage[] = [];
   const statuses: InboundStatus[] = [];
-  if (!body || typeof body !== 'object') return { messages, statuses };
+  if (!body || typeof body !== 'object') return { messages, statuses, wabaIds: [] };
 
   // ¿Es un callback de estado de una plantilla? Llega por el mismo webhook.
   const tipoEstado = String(body.type ?? '').toUpperCase();
   if (tipoEstado === 'SESSION') {
     // No es un estado de entrega: solo avisa que la ventana de 24 h quedó abierta.
-    return { messages, statuses };
+    return { messages, statuses, wabaIds: [] };
   }
   if (ESTADOS[tipoEstado]) {
     const errores = Array.isArray(body.errors) ? body.errors : [];
@@ -227,13 +227,13 @@ export function normalizarEntranteChattigo(body: any): InboundEvent {
       recipient: aE164(body.msisdn),
       errorCode: errores[0]?.code != null ? String(errores[0].code) : undefined,
     });
-    return { messages, statuses };
+    return { messages, statuses, wabaIds: [] };
   }
 
   const tipoCrudo = String(body.type ?? '').toLowerCase();
   if (TIPOS_DE_SISTEMA.has(tipoCrudo)) {
     log.info('chattigo: evento de sistema ignorado', { tipo: tipoCrudo });
-    return { messages, statuses };
+    return { messages, statuses, wabaIds: [] };
   }
 
   const from = aE164(body.msisdn);
@@ -242,7 +242,7 @@ export function normalizarEntranteChattigo(body: any): InboundEvent {
   const id = body.id != null ? `chattigo:${body.id}` : '';
   if (!from || !id) {
     log.warn('chattigo: mensaje sin remitente o sin id, descartado');
-    return { messages, statuses };
+    return { messages, statuses, wabaIds: [] };
   }
 
   const attachment = body.attachment ?? null;
@@ -276,7 +276,7 @@ export function normalizarEntranteChattigo(body: any): InboundEvent {
     filename: attachment?.fileName != null ? String(attachment.fileName) : undefined,
   });
 
-  return { messages, statuses };
+  return { messages, statuses, wabaIds: [] };
 }
 
 // ── Provider ────────────────────────────────────────────────────────────────────────────────────
