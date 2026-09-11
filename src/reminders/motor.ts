@@ -8,7 +8,7 @@ import {
   programarRecordatorio, pendientesDeDespacho,
   reclamarParaEnvio, registrarWamid, devolverAProgramado, reprogramar, marcarEstado,
 } from '../store/recordatorios';
-import { estadoAcademico, avancePrevioArchivado, cursoActivo } from '../store/cursos';
+import { estadoAcademico, avancePrevioArchivado, cursoActivo, expirarInscripciones } from '../store/cursos';
 import { estaCompleta, respondidas } from '../store/caracterizacion';
 import type { MessagingProvider } from '../messaging/types';
 
@@ -104,6 +104,11 @@ export type ResumenPlanificacion = { candidatos: number; programados: number; om
 export async function planificar(now = new Date()): Promise<ResumenPlanificacion> {
   let programados = 0;
   let omitidosPorTope = 0;
+
+  // Vencer PRIMERO. Si no, un cupo que expiró hace un minuto todavía figura como activo y recibe
+  // un "continúa tu curso" que ya no puede cumplir — y el estudiante descubre el vencimiento
+  // intentando seguir, en vez de por el aviso.
+  await expirarInscripciones();
 
   // PRIMERO el aviso gratuito: se planifica antes que el de 7 días para que, cuando ambos
   // apliquen, la persona reciba el que no cuesta.

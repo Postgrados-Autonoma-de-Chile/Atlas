@@ -1,4 +1,5 @@
 import { getPool } from './db';
+import { config } from '../config';
 import { log } from '../log';
 
 // Repositorio de cursos y progreso (Fase 4). Regla de la auditoría: los datos académicos van SIEMPRE
@@ -34,7 +35,13 @@ export type Leccion = {
 export type EstadoAcademico = {
   inscrito: boolean;
   curso?: { id: string; codigo: string; nombre: string; duracionMin: number };
-  enrollment?: { id: string; estado: 'activa' | 'completada' | 'abandonada'; minutosAcumulados: number };
+  enrollment?: {
+    id: string;
+    estado: 'activa' | 'completada' | 'abandonada' | 'vencida';
+    minutosAcumulados: number;
+    /** Fin del cupo. El curso no avanza pasada esa fecha hasta que la persona lo reactive. */
+    venceEn?: Date | null;
+  };
   totalLecciones?: number;
   completadas?: number;
   /** Próxima lección no completada (la actual), si el curso sigue activo. */
@@ -64,10 +71,17 @@ export async function inscribir(personId: string): Promise<EstadoAcademico | nul
   const curso = await cursoActivo();
   if (!curso) return { inscrito: false };
   try {
+    // El cupo tiene plazo, y reinscribirse tras el vencimiento lo REACTIVA conservando el avance:
+    // la persona sigue donde quedó. Solo se toca el estado si estaba vencida — una inscripción
+    // activa no debe renovar su plazo por volver a escribir "quiero inscribirme".
     await pool.query(
-      `INSERT INTO enrollment (person_id, course_id) VALUES ($1,$2)
-       ON CONFLICT ON CONSTRAINT enrollment_unico DO NOTHING`,
-      [personId, curso.id],
+      `INSERT INTO enrollment (person_id, course_id, vence_en)
+       VALUES ($1, $2, now() + ($3 || ' days')::interval)
+       ON CONFLICT ON CONSTRAINT enrollment_unico DO UPDATE
+         SET estado = CASE WHEN enrollment.estado = 'vencida' THEN 'activa' ELSE enrollment.estado END,
+             vence_en = CASE WHEN enrollment.estado = 'vencida'
+                             THEN now() + ($3 || ' days')::interval ELSE enrollment.vence_en END`,
+      [personId, curso.id, String(config.inscripcionDiasVigencia)],
     );
     return estadoAcademico(personId);
   } catch (e) {
@@ -83,7 +97,7 @@ export async function estadoAcademico(personId: string): Promise<EstadoAcademico
   try {
     const r = await pool.query(
       `SELECT c.id AS course_id, c.codigo, c.nombre, c.duracion_min,
-              e.id AS enrollment_id, e.estado, e.minutos_acumulados,
+              e.id AS enrollment_id, e.estado, e.minutos_acumulados, e.vence_en,
               (SELECT count(*)::int FROM lesson l JOIN module m ON m.id = l.module_id WHERE m.course_id = c.id) AS total,
               (SELECT count(*)::int FROM lesson_progress lp WHERE lp.enrollment_id = e.id AND lp.estado='completada') AS completadas
        FROM enrollment e JOIN course c ON c.id = e.course_id
@@ -107,7 +121,10 @@ export async function estadoAcademico(personId: string): Promise<EstadoAcademico
     return {
       inscrito: true,
       curso: { id: row.course_id, codigo: row.codigo, nombre: row.nombre, duracionMin: row.duracion_min },
-      enrollment: { id: row.enrollment_id, estado: row.estado, minutosAcumulados: row.minutos_acumulados },
+      enrollment: {
+        id: row.enrollment_id, estado: row.estado, minutosAcumulados: row.minutos_acumulados,
+        venceEn: row.vence_en ?? null,
+      },
       totalLecciones: row.total,
       completadas: row.completadas,
       proxima: p ? { orden: p.orden, titulo: p.titulo, tipo: p.tipo, duracionMin: p.duracion_min } : undefined,
@@ -366,4 +383,48 @@ export async function contextoAcademico(personId: string, nombre: string | null)
   }
   const prox = proxima ? ` Próxima microcápsula: ${proxima.orden}. "${proxima.titulo}" (~${proxima.duracionMin} min).` : '';
   return `${quien} Curso "${curso!.nombre}": ${completadas}/${totalLecciones} microcápsulas completadas, ${enrollment!.minutosAcumulados} min acumulados.${prox} Si quiere continuar, usa la tool continuar_curso.`;
+}
+
+/**
+ * Vence las inscripciones cuyo plazo se cumplió. Idempotente: el WHERE ya excluye las vencidas.
+ *
+ * No toca el avance. El estudiante conserva sus microcápsulas completadas y puede reactivar el
+ * cupo escribiendo; lo único que se detiene es poder seguir avanzando mientras esté vencida — que
+ * es lo que hace que el plazo signifique algo.
+ */
+export async function expirarInscripciones(): Promise<number> {
+  const pool = getPool();
+  if (!pool) return 0;
+  try {
+    const r = await pool.query(
+      `UPDATE enrollment SET estado='vencida'
+        WHERE estado='activa' AND vence_en IS NOT NULL AND vence_en < now()
+        RETURNING id`,
+    );
+    if (r.rowCount) log.info('cursos: inscripciones vencidas', { n: r.rowCount });
+    return r.rowCount ?? 0;
+  } catch (e) {
+    log.warn('cursos: expirarInscripciones falló', { err: String(e) });
+    return 0;
+  }
+}
+
+/** Vuelve a abrir un cupo vencido, con plazo nuevo y el avance intacto. */
+export async function reactivarInscripcion(personId: string): Promise<{ venceEn: Date } | null> {
+  const pool = getPool();
+  if (!pool) return null;
+  try {
+    const r = await pool.query(
+      `UPDATE enrollment e SET estado='activa', vence_en = now() + ($2 || ' days')::interval
+         FROM course c
+        WHERE c.id = e.course_id AND c.estado='activo'
+          AND e.person_id = $1 AND e.estado='vencida'
+        RETURNING e.vence_en`,
+      [personId, String(config.inscripcionDiasVigencia)],
+    );
+    return r.rows[0] ? { venceEn: r.rows[0].vence_en } : null;
+  } catch (e) {
+    log.warn('cursos: reactivarInscripcion falló', { err: String(e) });
+    return null;
+  }
 }

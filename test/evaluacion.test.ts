@@ -32,6 +32,8 @@ let estadoSim: any = { inscrito: true, completadas: 1, totalLecciones: 8 };
 
 mock.module('../src/store/cursos.ts', {
   namedExports: {
+    reactivarInscripcion: async () => null,
+    expirarInscripciones: async () => 0,
     estadoAcademico: async () => estadoSim,
     cursoActivo: async () => null,
     inscribir: async () => null,

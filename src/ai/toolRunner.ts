@@ -1,7 +1,7 @@
 import type { AgentContext } from '../core/channel';
 import { buscarPersonaPorWaId } from '../store/personas';
 import { inscribir, estadoAcademico, entregarLeccionActual, completarLeccionActual, cursoActivo,
-  avancePrevioArchivado, frasePrevio } from '../store/cursos';
+  avancePrevioArchivado, frasePrevio, reactivarInscripcion } from '../store/cursos';
 import { quizDeLeccion, quizzesPendientes } from '../store/evaluaciones';
 import { estaCompleta, respondidas, totalPreguntas } from '../store/caracterizacion';
 import { marcarQuizPendiente } from '../flows/evaluacion';
@@ -134,6 +134,9 @@ export async function executeTool(name: string, _input: unknown, ctx?: AgentCont
           completadas: estado.completadas,
           total: estado.totalLecciones,
           minutosAcumulados: estado.enrollment?.minutosAcumulados,
+          ...(estado.enrollment?.venceEn
+            ? { cupoVenceEn: new Date(estado.enrollment.venceEn).toISOString().slice(0, 10) }
+            : {}),
           proxima: estado.proxima ?? null,
           ...(await practicaPendiente(ctx.personId)),
         };
@@ -143,6 +146,16 @@ export async function executeTool(name: string, _input: unknown, ctx?: AgentCont
         if (!ctx?.personId) return NO_REGISTRADO;
         const bloqueo = await faltaCaracterizacion(ctx.personId);
         if (bloqueo) return bloqueo;
+        // Cupo vencido: no es lo mismo que "no hay lección". Se reactiva en el acto —conserva el
+        // avance— y se sigue, en vez de dejar a la persona en un callejón sin salida.
+        const previo = await estadoAcademico(ctx.personId);
+        if (previo?.enrollment?.estado === 'vencida') {
+          const r = await reactivarInscripcion(ctx.personId);
+          if (r) {
+            void audit({ type: 'inscripcion_reactivada', dialogId: ctx.conversationId });
+          }
+        }
+
         const entrega = await entregarLeccionActual(ctx.personId);
         if (!entrega) {
           // Ya completó el curso (o no está inscrito). Si le quedan quizzes por rendir, es lo único

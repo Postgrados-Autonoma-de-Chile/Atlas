@@ -37,6 +37,8 @@ const estadoDe = (s: Sim) => ({
 
 mock.module('../src/store/cursos.ts', {
   namedExports: {
+    reactivarInscripcion: async () => null,
+    expirarInscripciones: async () => 0,
     // El mock reemplaza el módulo COMPLETO: sin estos dos, el toolRunner no resuelve sus imports.
     avancePrevioArchivado: async () => previoSim,
     frasePrevio: (p: any) => `Ya había avanzado ${p.completadas} de ${p.total}. NO se traslada.`,

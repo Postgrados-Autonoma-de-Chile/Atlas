@@ -32,6 +32,8 @@ let inscripciones = 0;
 const CURSO = { id: 'c1', codigo: 'NIVEL-1-IA-PROBLEMAS', nombre: 'Nivel Inicial: Alfabetización ciudadana en Inteligencia Artificial', duracionMin: 55 };
 mock.module('../src/store/cursos.ts', {
   namedExports: {
+    reactivarInscripcion: async () => null,
+    expirarInscripciones: async () => 0,
     inscribir: async () => (inscripciones++, { inscrito: true, curso: CURSO, totalLecciones: 8, completadas: 0 }),
     cursoActivo: async () => CURSO,
     estadoAcademico: async () => ({ inscrito: true, curso: CURSO, totalLecciones: 8, completadas: 0 }),

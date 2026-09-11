@@ -78,6 +78,8 @@ mock.module('../src/store/caracterizacion.ts', {
 });
 mock.module('../src/store/cursos.ts', {
   namedExports: {
+    reactivarInscripcion: async () => null,
+    expirarInscripciones: async () => 0,
     avancePrevioArchivado: async () => avancePrevio,
     frasePrevio: () => '',
     cursoActivo: async () => ({ id: 'c1', codigo: 'NIVEL-1', nombre: 'Nivel Inicial: Alfabetización ciudadana en IA', descripcion: null, duracionMin: 55 }),

@@ -123,6 +123,8 @@ const Env = z.object({
    * costaría una plantilla, que es justo lo que este umbral evita.
    */
   REMINDER_HORAS_PRIMER_AVISO: z.coerce.number().int().min(1).max(23).default(20),
+  /** Días que dura el cupo desde la inscripción. Vencido, la persona puede reactivarlo. */
+  INSCRIPCION_DIAS_VIGENCIA: z.coerce.number().int().positive().default(30),
 
   // ── Convocatoria de cohortes ──
   /** Apagada por defecto: encenderla gasta plantillas pagadas y consume el tramo de Meta. */
@@ -249,6 +251,7 @@ export const config = {
   reminderDiasInactividad: env.REMINDER_DIAS_INACTIVIDAD,
   reminderMaxSinActividad: env.REMINDER_MAX_SIN_ACTIVIDAD,
   reminderHorasPrimerAviso: env.REMINDER_HORAS_PRIMER_AVISO,
+  inscripcionDiasVigencia: env.INSCRIPCION_DIAS_VIGENCIA,
 
   convocatoriaActiva: env.CONVOCATORIA_ACTIVA === 'true',
   convocatoriaTemplate: env.CONVOCATORIA_TEMPLATE,

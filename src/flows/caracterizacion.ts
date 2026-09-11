@@ -71,9 +71,12 @@ const T = {
   // que el modelo interprete la respuesta: en el piloto un "si" quedó suelto y el tutor lo resolvió
   // contra una conversación anterior sobre el quiz, anunciando una pregunta que nadie iba a enviar.
   // El cierre entrega un botón, cuya respuesta no admite dos lecturas.
-  completa: (curso: string) =>
+  completa: (curso: string, vence: string | null) =>
     `¡Listo! ✅ Gracias por responder.\n\nYa quedaste inscrito en *${curso}*: son 8 microcápsulas ` +
-    `de 5 a 7 minutos y puedes hacerlas a tu ritmo.`,
+    `de 5 a 7 minutos y puedes hacerlas a tu ritmo` +
+    // El plazo se dice AL INSCRIBIR. Vencerle el cupo a alguien que nunca supo que había plazo
+    // sería una trampa, y además es el dato que vuelve cierto el recordatorio que llega después.
+    (vence ? `, hasta el *${vence}*.` : '.'),
   pausada: (hechas: number, total: number) =>
     `Sin problema, dejamos el cuestionario en la pregunta ${hechas + 1} de ${total} 🙂 ` +
     `Cuando quieras seguir, escribe *cuestionario*.`,
@@ -204,7 +207,10 @@ async function continuar(
       const estado = await inscribir(persona.id);
       const curso = estado?.curso?.nombre ?? (await cursoActivo())?.nombre ?? 'el curso';
       if (estado?.inscrito) void audit({ type: 'inscripcion', dialogId: waId, detail: { curso: estado.curso?.codigo } });
-      await provider.enviarBotones(waId, T.completa(curso), [
+      const vence = estado?.enrollment?.venceEn
+        ? new Date(estado.enrollment.venceEn).toLocaleDateString('es-CL', { day: 'numeric', month: 'long', timeZone: 'America/Santiago' })
+        : null;
+      await provider.enviarBotones(waId, T.completa(curso, vence), [
         { id: 'arranque:comenzar', titulo: 'Comenzar ahora' },
       ]);
     }
