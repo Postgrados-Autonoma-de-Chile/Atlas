@@ -25,11 +25,43 @@ let embudo: any = {
 let avance: any[] = [{ completadas: 0, personas: 30 }, { completadas: 8, personas: 20 }];
 let altas: any[] = [{ dia: '2026-09-10', n: 3 }, { dia: '2026-09-11', n: 0 }];
 
+let porHora: any[] = [
+  { hora: '09', turnos: 4, eventos: 11 },
+  { hora: '10', turnos: 0, eventos: 0 },
+  { hora: '11', turnos: 20, eventos: 60 },
+];
+let recientes: any[] = [
+  { tipo: 'certificado_emitido', ts: new Date(Date.now() - 120_000) },
+  { tipo: 'leccion_entregada', ts: new Date(Date.now() - 3_600_000) },
+  { tipo: 'evento_que_no_existia', ts: new Date(Date.now() - 7_200_000) },
+];
+let cursos: any[] = [
+  { codigo: 'NIVEL-1', nombre: 'Nivel Inicial', estado: 'activo', duracion_min: 55, modulos: 3,
+    lecciones: 8, inscritas: 60, completadas: 20, minutos: 31, avance_pct: 42 },
+  { codigo: 'NIVEL-0', nombre: 'Versión anterior', estado: 'archivado', duracion_min: 40, modulos: 2,
+    lecciones: 6, inscritas: 9, completadas: 1, minutos: 12, avance_pct: 17 },
+];
+let modulos: any[] = [
+  { curso: 'Nivel Inicial', orden: 1, nombre: 'Qué es la IA', lecciones: 3, entregadas: 30, completadas: 20 },
+];
+
 function responder(sql: string) {
   sqls.push(sql);
   if (/AS registradas/.test(sql)) return { rows: [embudo] };
   if (/GROUP BY completadas/.test(sql)) return { rows: avance };
-  if (/generate_series/.test(sql)) return { rows: altas };
+  if (/FROM person WHERE created_at/.test(sql)) return { rows: altas };
+  if (/AS hora/.test(sql)) return { rows: porHora };
+  if (/percentile_disc/.test(sql)) {
+    return { rows: [{ muestras: 218, mediana: '2400', p90: '9100' }] };
+  }
+  if (/GROUP BY 1 ORDER BY 2 DESC/.test(sql)) return { rows: [{ tipo: 'turn', n: 5 }] };
+  if (/ORDER BY ts DESC LIMIT/.test(sql)) return { rows: recientes };
+  if (/AS registro,/.test(sql)) {
+    return { rows: [{ registro: 3, cuestionario: 2, inscripcion: 2, entregada: 9, completada: 6,
+                      evaluacion: 4, certificado: 1, recordatorio: 12, consulta: 7 }] };
+  }
+  if (/FROM course c/.test(sql) && /AS modulos/.test(sql)) return { rows: cursos };
+  if (/FROM module m/.test(sql)) return { rows: modulos };
   if (/AS turnos/.test(sql)) return { rows: [{ turnos: 1200, alertas: 2 }] };
   if (/vence_en BETWEEN/.test(sql)) return { rows: [{ n: 7 }] };
   throw new Error('consulta no prevista: ' + sql.replace(/\s+/g, ' ').slice(0, 70));
@@ -53,7 +85,7 @@ mock.module('../src/store/db.ts', {
   },
 });
 
-const { resumenDireccion } = await import('../src/store/panel');
+const { resumenDireccion, pulsoAgente, catalogoPanel } = await import('../src/store/panel');
 const { direccionHtml } = await import('../src/obs/panelHtml');
 
 const sqlCon = (re: RegExp) => sqls.find((s) => re.test(s));
@@ -182,4 +214,109 @@ test('las barras pintan con style, no con el atributo fill', async () => {
   const html = direccionHtml(r, 9.03);
   assert.match(html, /<rect [^>]*style="fill:var\(--/);
   assert.doesNotMatch(html, /<rect [^>]*fill="var\(/, 'nunca var() en el atributo');
+});
+
+// ── Pulso del agente y catálogo: las métricas e interacciones del dashboard ──
+
+const traerPulso = async () => { sqls = []; const p = await pulsoAgente(); assert.ok(p); return p!; };
+const traerCatalogo = async () => { sqls = []; const c = await catalogoPanel(); assert.ok(c); return c!; };
+
+test('el feed NO consulta el dialog_id: es el teléfono de la persona', async () => {
+  // Esta vista existe para poder proyectarse en una reunión. Un feed que dijera "+56 9 …" la
+  // convertiría en la misma pantalla que la de cohorte, que es la que NO se puede mostrar.
+  await traerPulso();
+  for (const q of sqls) assert.doesNotMatch(q, /dialog_id/, 'ni siquiera se selecciona');
+  const p = await pulsoAgente();
+  assert.ok(p!.recientes.every((e) => !('dialogId' in e) && !('waId' in e)));
+});
+
+test('un tipo de evento desconocido se muestra crudo, no se traga', async () => {
+  // Si aparece un `type` nuevo y la tabla de etiquetas no lo tiene, la alternativa a mostrarlo feo
+  // es que desaparezca del registro — que es peor.
+  const r = await traer();
+  const p = await pulsoAgente();
+  const html = direccionHtml(r, 9.03, p, null);
+  assert.match(html, /certificado emitido/, 'los conocidos se traducen');
+  assert.match(html, /evento_que_no_existia/, 'y el desconocido igual aparece');
+});
+
+test('la latencia se informa como mediana y p90, nunca como promedio', async () => {
+  // Un turno de certificación de 70 s arrastra la media y deja de describir lo que le pasa a la
+  // mayoría. La consulta lo resuelve en Postgres, no en JS sobre todas las filas.
+  await traerPulso();
+  const q = sqls.find((s) => /percentile_disc/.test(s))!;
+  assert.match(q, /percentile_disc\(0\.5\)/);
+  assert.match(q, /percentile_disc\(0\.9\)/);
+  assert.doesNotMatch(q, /avg\(/, 'nada de promedio');
+  const r = await traer();
+  const html = direccionHtml(r, 9.03, await pulsoAgente(), null);
+  assert.match(html, /2,4 s/, 'mediana en segundos, con coma decimal');
+  assert.match(html, /p90 9,1 s/);
+});
+
+test('las barras por hora apilan turnos dentro del total, sin partir el turno en dos', async () => {
+  // El dashboard de referencia separa "mensajes del participante" de "respuestas del agente". Acá
+  // un turno es las dos cosas a la vez y el desglose no está registrado, así que inventar el
+  // reparto sería dibujar un dato que no existe. Se apila turnos dentro de eventos, que sí es
+  // exacto: eventos INCLUYE los turnos.
+  const r = await traer();
+  const html = direccionHtml(r, 9.03, await pulsoAgente(), null);
+  assert.match(html, /turnos con el tutor/);
+  assert.match(html, /otros eventos del agente/);
+  assert.doesNotMatch(html, /respuestas del agente/i, 'esa serie no existe en los datos');
+  assert.match(html, /pico 11:00 · 60 eventos/);
+});
+
+test('las horas sin actividad se dibujan igual', async () => {
+  await traerPulso();
+  const q = sqls.find((s) => /AS hora/.test(s))!;
+  assert.match(q, /generate_series/);
+  assert.match(q, /AT TIME ZONE 'America\/Santiago'/, 'la hora es la de Chile');
+  const r = await traer();
+  const html = direccionHtml(r, 9.03, await pulsoAgente(), null);
+  assert.match(html, />10</, 'la hora vacía conserva su lugar en el eje');
+});
+
+test('el ciclo de hoy cuenta eventos reales, etapa por etapa', async () => {
+  const r = await traer();
+  const html = direccionHtml(r, 9.03, await pulsoAgente(), null);
+  assert.match(html, /sin intervención humana/);
+  assert.match(html, /<b>9<\/b><span>microcápsulas entregadas/);
+  assert.match(html, /<b>1<\/b><span>certificados/);
+  assert.match(html, /envió 12 recordatorios/);
+  assert.match(html, /material del curso 7 veces/);
+});
+
+test('el catálogo distingue el curso vigente de los archivados', async () => {
+  const c = await traerCatalogo();
+  assert.equal(c.cursos.length, 2);
+  const r = await traer();
+  const html = direccionHtml(r, 9.03, null, c);
+  assert.match(html, /pastilla-ok">vigente/);
+  assert.match(html, /curso-viejo/, 'el archivado se atenúa, no se esconde');
+  assert.match(html, /42 % de avance promedio/);
+});
+
+test('el avance por módulo mide el cierre sobre lo entregado', async () => {
+  const c = await traerCatalogo();
+  // 20 completadas de 30 entregadas + 20 completadas = 40 %. Una entrega sin cierre es alguien
+  // que la recibió y no volvió: ese es el número que importa.
+  assert.equal(c.modulos[0].pct, 40);
+});
+
+test('si el pulso o el catálogo fallan, la vista se dibuja sin ese bloque', async () => {
+  // Lo que no se puede leer no se rellena con nada. Media pantalla cierta es mejor que una
+  // pantalla entera con un bloque inventado.
+  const r = await traer();
+  const html = direccionHtml(r, 9.03, null, null);
+  assert.doesNotMatch(html, /sin intervención humana/);
+  assert.doesNotMatch(html, /Cursos cargados/);
+  assert.match(html, /Del registro al certificado/, 'el embudo sigue ahí');
+  assert.doesNotMatch(html, /NaN|undefined/);
+});
+
+test('la vista completa sigue sin un solo dato personal', async () => {
+  const r = await traer();
+  const html = direccionHtml(r, 9.03, await pulsoAgente(), await catalogoPanel());
+  assert.doesNotMatch(html, /telefono|teléfono|wa_id|\+56|email|correo|rut/i);
 });

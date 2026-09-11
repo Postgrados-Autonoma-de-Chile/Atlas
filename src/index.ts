@@ -11,7 +11,10 @@ import { dbResumenNegocio } from './store/metricasNegocio';
 import { kvKind, kvVivo, once } from './store/kv';
 import { verificarPorFolio } from './store/certificados';
 import { requireDashboardToken } from './routes/guard';
-import { panelCohorte, caracterizacionAgregada, caracterizacionPagina, resumenDireccion } from './store/panel';
+import {
+  panelCohorte, caracterizacionAgregada, caracterizacionPagina, resumenDireccion,
+  pulsoAgente, catalogoPanel,
+} from './store/panel';
 import { panelCohorteHtml, panelAccesoHtml, caracterizacionHtml, filasDetalleHtml, direccionHtml } from './obs/panelHtml';
 import { rateLimit } from './routes/rateLimit';
 import { planificar, despachar } from './reminders/motor';
@@ -147,11 +150,14 @@ app.get('/panel', strictLimiter, (_req, res) => {
 // proyectar en una reunión sin exponer a nadie. Igual va detrás del token: quién se inscribe y
 // cuántos abandonan tampoco es información pública.
 app.get('/panel/direccion', strictLimiter, requireDashboardToken, async (_req, res) => {
-  const r = await resumenDireccion();
+  // Tres bloques con ritmos distintos —el embudo se mueve en semanas, el pulso en minutos y el
+  // catálogo cuando se recarga el currículo—, así que cada uno trae su propia caché y se piden a
+  // la vez. Si el pulso o el catálogo fallan, la vista se dibuja sin ese bloque en vez de caerse.
+  const [r, pulso, catalogo] = await Promise.all([resumenDireccion(), pulsoAgente(), catalogoPanel()]);
   res.setHeader('X-Robots-Tag', 'noindex, nofollow');
   res.setHeader('Cache-Control', 'no-store');
   if (!r) return res.status(503).send('Base de datos no disponible.');
-  res.type('html').send(direccionHtml(r, config.panelClpPorTurno));
+  res.type('html').send(direccionHtml(r, config.panelClpPorTurno, pulso, catalogo));
 });
 
 // Los datos. El limitador estricto va además del token: es el único endpoint con PII donde alguien

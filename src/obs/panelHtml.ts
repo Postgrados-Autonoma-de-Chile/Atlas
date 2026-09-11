@@ -1,4 +1,7 @@
-import type { ResumenPanel, FilaPanel, PreguntaAgregada, PaginaCaracterizacion, ResumenDireccion } from '../store/panel';
+import type {
+  ResumenPanel, FilaPanel, PreguntaAgregada, PaginaCaracterizacion, ResumenDireccion,
+  PulsoAgente, CatalogoPanel,
+} from '../store/panel';
 
 // Render del panel de cohorte. HTML autocontenido, sin dependencias externas: se abre desde un
 // archivo guardado en el disco de quien lo pidió y funciona sin red.
@@ -246,6 +249,100 @@ export const PANEL_CSS = `
         letter-spacing:-.02em;font-variant-numeric:tabular-nums}
       .costos span{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
         color:var(--color-neutral-500)}
+
+      /* Encabezado vivo. El latido es la única animación de la vista y es la que Nocturne admite:
+         el acento como resplandor, no como relleno. Se apaga con prefers-reduced-motion. */
+      .dir-cab{display:flex;justify-content:space-between;align-items:flex-start;
+        gap:var(--space-6);flex-wrap:wrap;margin:0 0 var(--space-8)}
+      .vivo{display:flex;align-items:center;gap:var(--space-2);margin:var(--space-2) 0 0;
+        font-size:12px;color:var(--color-neutral-500)}
+      .latido{width:7px;height:7px;border-radius:50%;background:var(--p-bien);flex:none;
+        animation:latir 2s ease-out infinite}
+      @keyframes latir{
+        0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--p-bien) 45%,transparent)}
+        70%{box-shadow:0 0 0 7px transparent}
+        100%{box-shadow:0 0 0 0 transparent}}
+      @media(prefers-reduced-motion:reduce){.latido{animation:none}}
+      .chip{display:flex;flex-direction:column;gap:2px;padding:var(--space-3) var(--space-6);
+        border-radius:var(--radius-md);background:var(--color-bg);
+        box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--color-accent) 35%,transparent)}
+      .chip-k{font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+        color:var(--color-accent)}
+      .chip b{font-family:var(--font-heading);font-weight:var(--font-heading-weight);font-size:22px;
+        line-height:1.1;font-variant-numeric:tabular-nums}
+      .chip-sub{font-size:11px;color:var(--color-neutral-600);font-variant-numeric:tabular-nums}
+      .kpi .punto{width:5px;height:5px;border-radius:50%;background:var(--color-accent);
+        flex:none;margin-bottom:var(--space-1)}
+      .kpi-ok .punto{background:var(--p-bien)}
+
+      .h2-fila{display:flex;align-items:baseline;justify-content:space-between;
+        gap:var(--space-4);flex-wrap:wrap}
+      .h2-fila h2{margin-bottom:var(--space-4)}
+      .pastilla{display:inline-flex;align-items:center;font-size:11px;letter-spacing:.02em;
+        padding:3px 10px;border-radius:calc(var(--radius-md)*.75)}
+      .pastilla-acento{border:1px solid var(--color-accent);color:var(--color-accent)}
+      .pastilla-ok{background:var(--p-bien-fill);color:var(--p-bien-texto)}
+      .pastilla-off{background:var(--color-neutral-900);color:var(--color-neutral-400)}
+      .caja-ancha{margin:0 0 var(--space-3)}
+
+      /* La cinta del ciclo: las etapas en el orden en que ocurren, con la cuenta de hoy. */
+      .cinta{display:flex;align-items:stretch;gap:var(--space-2);flex-wrap:wrap;
+        margin:0 0 var(--space-4)}
+      .paso{display:flex;flex-direction:column;gap:2px;padding:var(--space-3) var(--space-4);
+        border-radius:var(--radius-md);background:var(--color-surface);min-width:6.5rem;flex:1}
+      .paso b{font-family:var(--font-heading);font-weight:var(--font-heading-weight);font-size:22px;
+        line-height:1.1;font-variant-numeric:tabular-nums;color:var(--color-accent-300)}
+      .paso span{font-size:10.5px;line-height:1.35;color:var(--color-neutral-500)}
+      .paso-cero b{color:var(--color-neutral-700)}
+      .paso-flecha{align-self:center;color:var(--color-neutral-700);font-size:13px;flex:none}
+
+      /* Feed de actividad. Punto de color por familia, hora relativa a la derecha. */
+      .feed{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+      .feed li{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-2) 0;
+        font-size:12.5px;background:linear-gradient(to right,transparent,
+          color-mix(in srgb,var(--color-text) 7%,transparent) 24px,
+          color-mix(in srgb,var(--color-text) 7%,transparent) calc(100% - 24px),transparent)
+          no-repeat bottom/100% 1px}
+      .feed li:last-child{background:none}
+      .feed li i{width:6px;height:6px;border-radius:50%;flex:none}
+      .feed-txt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+        color:var(--color-neutral-200)}
+      .feed-hora{flex:none;font-size:11px;color:var(--color-neutral-600);
+        font-variant-numeric:tabular-nums}
+
+      .leyenda{display:flex;gap:var(--space-6);flex-wrap:wrap;margin:var(--space-3) 0 0;
+        font-size:11px;color:var(--color-neutral-500)}
+      .leyenda span{display:inline-flex;align-items:center;gap:var(--space-2)}
+      .leyenda i{width:8px;height:8px;border-radius:2px;flex:none}
+      .leyenda-pico{margin-left:auto;color:var(--color-accent-300);
+        font-variant-numeric:tabular-nums}
+      .g-pico{font-size:8.5px;fill:var(--color-accent-300);font-variant-numeric:tabular-nums}
+
+      /* Catálogo: una tarjeta por curso. */
+      .cursos{display:grid;gap:var(--space-3);
+        grid-template-columns:repeat(auto-fit,minmax(15rem,1fr))}
+      .curso{padding:var(--space-6);border-radius:var(--radius-md);background:var(--color-surface);
+        display:flex;flex-direction:column;gap:var(--space-2)}
+      .curso-viejo{opacity:.62}
+      .curso-cab{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3)}
+      .curso-cod{font-family:ui-monospace,monospace;font-size:10.5px;letter-spacing:.06em;
+        color:var(--color-neutral-500)}
+      .curso-nom{font-family:var(--font-heading);font-weight:var(--font-heading-weight);
+        font-size:14px;line-height:1.3}
+      .curso-datos{display:flex;gap:var(--space-4);flex-wrap:wrap;font-size:11px;
+        color:var(--color-neutral-500)}
+      .curso-datos b{font-family:var(--font-heading);color:var(--color-neutral-200);
+        font-variant-numeric:tabular-nums}
+      .curso-barra{height:5px;background:var(--color-neutral-900);border-radius:2px;
+        overflow:hidden;margin-top:var(--space-1)}
+      .curso-barra i{display:block;height:100%;border-radius:2px}
+      .curso-pie{font-size:11px;color:var(--color-neutral-600);font-variant-numeric:tabular-nums}
+
+      .mini-barra{display:inline-block;width:4.5rem;height:5px;border-radius:2px;
+        background:var(--color-neutral-900);overflow:hidden;vertical-align:middle;
+        margin-right:var(--space-3)}
+      .mini-barra i{display:block;height:100%;background:var(--color-accent-500);border-radius:2px}
+      .mini-pct{font-size:11px;color:var(--color-neutral-500);font-variant-numeric:tabular-nums}
     `;
 
 /**
@@ -576,13 +673,250 @@ function peldano(etiqueta: string, n: number, tope: number, color: string): stri
   );
 }
 
+
+/**
+ * Nombre legible de cada evento de auditoría.
+ *
+ * El feed muestra el vocabulario real del sistema —son los `type` que escribe `audit()`— traducido
+ * a lo que significa para una persona. Si aparece un tipo nuevo que no está acá, se muestra crudo:
+ * es preferible una etiqueta fea a que un evento desaparezca del registro por no estar en la tabla.
+ */
+const ETIQUETA_EVENTO: Record<string, string> = {
+  registro_inicio: 'alguien escribió por primera vez',
+  registro_consentimiento: 'consentimiento de datos aceptado',
+  registro_completo: 'registro completo',
+  registro_rechazado: 'registro rechazado',
+  caracterizacion_iniciada: 'cuestionario inicial abierto',
+  caracterizacion_completada: 'cuestionario inicial completo',
+  inscripcion: 'inscripción al curso',
+  inscripcion_reactivada: 'cupo reactivado',
+  leccion_entregada: 'microcápsula entregada',
+  leccion_completada: 'microcápsula completada',
+  evaluacion_iniciada: 'mini-quiz enviado',
+  respuesta_evaluacion: 'respuesta al mini-quiz',
+  refuerzo_evaluacion: 'refuerzo tras respuesta incorrecta',
+  evaluacion_finalizada: 'mini-quiz resuelto',
+  nota_personal_guardada: '«Mi necesidad» registrada',
+  nota_personal_saltada: '«Mi necesidad» omitida',
+  nota_personal_rechazada: '«Mi necesidad» con dato sensible, no guardada',
+  ficha_cierre_iniciada: 'ficha de cierre abierta',
+  ficha_cierre_completada: 'ficha de cierre completa',
+  certificacion_iniciada: 'certificación en curso',
+  certificado_emitido: 'certificado emitido',
+  certificado_enviado: 'certificado enviado',
+  email_verificado: 'correo verificado',
+  optin_recordatorios: 'aceptó recordatorios',
+  optout_recordatorios: 'pidió no recibir recordatorios',
+  recordatorio_enviado: 'recordatorio enviado',
+  convocatoria_oleada: 'oleada de convocatoria',
+  rag_busqueda: 'el tutor consultó el material del curso',
+  alerta_bienestar: 'contención por señal de riesgo vital',
+  alerta_identidad_rut: 'RUT detectado donde no correspondía',
+};
+
+/** Familia semántica del evento, para el punto de color del feed. */
+function familiaEvento(tipo: string): string {
+  if (tipo.startsWith('certificado') || tipo === 'evaluacion_finalizada' || tipo === 'leccion_completada') {
+    return 'var(--p-bien)';
+  }
+  if (tipo.startsWith('alerta')) return 'var(--p-critico)';
+  if (tipo === 'recordatorio_enviado' || tipo.startsWith('optout') || tipo.endsWith('_rechazado')) {
+    return 'var(--p-aviso)';
+  }
+  return 'var(--color-accent-500)';
+}
+
+/** Distancia en el tiempo, en la unidad que corresponda: el feed se mide en minutos, no en días. */
+function haceCorto(d: Date): string {
+  const seg = Math.max(0, Math.floor((Date.now() - new Date(d).getTime()) / 1000));
+  if (seg < 60) return 'ahora';
+  const min = Math.floor(seg / 60);
+  if (min < 60) return `hace ${min} min`;
+  const hrs = Math.floor(min / 60);
+  if (hrs < 24) return `hace ${hrs} h`;
+  const dias = Math.floor(hrs / 24);
+  return dias === 1 ? 'ayer' : `hace ${dias} días`;
+}
+
+const HORA_CL: Intl.DateTimeFormatOptions = {
+  hour: '2-digit', minute: '2-digit', timeZone: 'America/Santiago', hour12: false,
+};
+const horaChile = (d: Date) => new Date(d).toLocaleTimeString('es-CL', HORA_CL);
+
+/**
+ * Interacciones por hora, apiladas.
+ *
+ * Apilar es exacto acá y no una licencia: `eventos` INCLUYE los turnos, así que turnos abajo más
+ * (eventos − turnos) arriba suma justo el total. Dos series de la misma tabla, sin inventar el
+ * reparto — que es lo que pasaría si partiera los turnos en "mensajes de la persona" y "respuestas
+ * del agente": un turno es los dos a la vez y el desglose no está registrado por separado.
+ */
+function barrasHoras(datos: { hora: string; turnos: number; eventos: number }[]): string {
+  if (!datos.length) return '';
+  const ancho = 332, alto = 142, gap = 5;
+  const max = Math.max(...datos.map((d) => d.eventos), 1);
+  const base = alto - 22;
+  const techo = base - 18;
+  const w = Math.max(5, (ancho - gap * (datos.length - 1)) / datos.length);
+  const pico = datos.reduce((a, b) => (b.eventos > a.eventos ? b : a), datos[0]);
+
+  const barras = datos
+    .map((d, i) => {
+      const x = i * (w + gap);
+      const hTotal = d.eventos === 0 ? 1.5 : Math.max(3, (d.eventos / max) * techo);
+      const hTurnos = d.eventos === 0 ? 0 : (d.turnos / max) * techo;
+      const yTotal = base - hTotal;
+      const esPico = d.hora === pico.hora && pico.eventos > 0;
+      return (
+        `<rect x="${x.toFixed(1)}" y="${yTotal.toFixed(1)}" width="${w.toFixed(1)}" height="${hTotal.toFixed(1)}" rx="2" style="fill:var(--color-accent-800)"></rect>` +
+        (hTurnos > 0.5
+          ? `<rect x="${x.toFixed(1)}" y="${(base - hTurnos).toFixed(1)}" width="${w.toFixed(1)}" height="${hTurnos.toFixed(1)}" rx="2" style="fill:var(--color-accent-500)"></rect>`
+          : '') +
+        (esPico
+          ? `<text class="g-pico" x="${(x + w / 2).toFixed(1)}" y="${(yTotal - 5).toFixed(1)}" text-anchor="middle">${d.eventos}</text>`
+          : '') +
+        `<text class="g-eje" x="${(x + w / 2).toFixed(1)}" y="${(base + 13).toFixed(1)}" text-anchor="middle">${escapar(d.hora)}</text>`
+      );
+    })
+    .join('');
+
+  return (
+    `<svg viewBox="0 0 340 150" role="img" aria-label="Eventos por hora en las últimas 14 horas, con los turnos de conversación destacados">` +
+    `<g transform="translate(4,8)">${barras}</g></svg>` +
+    `<div class="leyenda">` +
+    `<span><i style="background:var(--color-accent-500)"></i>turnos con el tutor</span>` +
+    `<span><i style="background:var(--color-accent-800)"></i>otros eventos del agente</span>` +
+    (pico.eventos > 0
+      ? `<span class="leyenda-pico">pico ${escapar(pico.hora)}:00 · ${pico.eventos} eventos</span>`
+      : '') +
+    `</div>`
+  );
+}
+
+/**
+ * El ciclo de hoy, etapa por etapa.
+ *
+ * Lo que el dashboard de referencia llama "ciclo autónomo": acá la afirmación es literal y
+ * verificable, no una promesa de marketing — no existe ninguna ruta humana en el lazo. La
+ * contracara está dicha en la misma tarjeta, porque es la consecuencia incómoda de lo mismo: las
+ * contenciones por riesgo vital tampoco tienen a nadie detrás.
+ */
+const ETAPAS: { clave: string; etiqueta: string }[] = [
+  { clave: 'registro', etiqueta: 'registros' },
+  { clave: 'cuestionario', etiqueta: 'cuestionarios' },
+  { clave: 'inscripcion', etiqueta: 'inscripciones' },
+  { clave: 'entregada', etiqueta: 'microcápsulas entregadas' },
+  { clave: 'completada', etiqueta: 'microcápsulas completadas' },
+  { clave: 'evaluacion', etiqueta: 'mini-quizzes resueltos' },
+  { clave: 'certificado', etiqueta: 'certificados' },
+];
+
+function cicloHtml(ciclo: { clave: string; n: number }[]): string {
+  const por = new Map(ciclo.map((c) => [c.clave, c.n]));
+  const extra = (k: string) => por.get(k) ?? 0;
+  const pasos = ETAPAS.map((e, i) => {
+    const n = por.get(e.clave) ?? 0;
+    return (
+      (i > 0 ? `<span class="paso-flecha" aria-hidden="true">→</span>` : '') +
+      `<span class="paso${n === 0 ? ' paso-cero' : ''}"><b>${n}</b><span>${escapar(e.etiqueta)}</span></span>`
+    );
+  }).join('');
+
+  return (
+    `<div class="cinta">${pasos}</div>` +
+    `<p class="nota-dir">Hoy, en hora de Chile. El tutor además envió ${extra('recordatorio')} ` +
+    `recordatorio${extra('recordatorio') === 1 ? '' : 's'} y consultó el material del curso ` +
+    `${extra('consulta')} ${extra('consulta') === 1 ? 'vez' : 'veces'} para responder dudas.</p>`
+  );
+}
+
+/** El feed. Qué pasó y cuándo — nunca a quién: el `dialog_id` es un teléfono y no se consulta. */
+function feedHtml(recientes: { tipo: string; en: Date }[]): string {
+  if (!recientes.length) return `<p class="nota-dir">Sin eventos registrados todavía.</p>`;
+  return (
+    `<ul class="feed">` +
+    recientes
+      .map(
+        (e) =>
+          `<li><i style="background:${familiaEvento(e.tipo)}"></i>` +
+          `<span class="feed-txt">${escapar(ETIQUETA_EVENTO[e.tipo] ?? e.tipo)}</span>` +
+          `<span class="feed-hora">${escapar(haceCorto(e.en))}</span></li>`,
+      )
+      .join('') +
+    `</ul>`
+  );
+}
+
+function cursosHtml(cursos: CatalogoPanel['cursos']): string {
+  if (!cursos.length) return `<p class="nota-dir">El agente no tiene ningún curso cargado.</p>`;
+  return (
+    `<div class="cursos">` +
+    cursos
+      .map((c) => {
+        const vigente = c.estado === 'activo';
+        return (
+          `<div class="curso${vigente ? '' : ' curso-viejo'}">` +
+          `<div class="curso-cab">` +
+          `<span class="curso-cod">${escapar(c.codigo)}</span>` +
+          `<span class="pastilla ${vigente ? 'pastilla-ok' : 'pastilla-off'}">${vigente ? 'vigente' : escapar(c.estado)}</span>` +
+          `</div>` +
+          `<div class="curso-nom">${escapar(c.nombre)}</div>` +
+          `<div class="curso-datos">` +
+          `<span><b>${c.modulos}</b> módulos</span>` +
+          `<span><b>${c.lecciones}</b> microcápsulas</span>` +
+          `<span><b>${c.duracionMin}</b> min</span>` +
+          `<span><b>${c.inscritas.toLocaleString('es-CL')}</b> inscritas</span>` +
+          `</div>` +
+          `<div class="curso-barra" title="Avance promedio de quienes se inscribieron">` +
+          `<i style="width:${Math.min(100, Math.max(c.avancePct, c.avancePct > 0 ? 2 : 0))}%;background:${vigente ? 'var(--color-accent-500)' : 'var(--color-neutral-700)'}"></i></div>` +
+          `<div class="curso-pie">${c.avancePct} % de avance promedio · ${c.completadas} completaron</div>` +
+          `</div>`
+        );
+      })
+      .join('') +
+    `</div>`
+  );
+}
+
+function modulosHtml(modulos: CatalogoPanel['modulos']): string {
+  if (!modulos.length) return `<p class="nota-dir">Sin módulos en el curso vigente.</p>`;
+  return (
+    `<div class="scroll"><table><thead><tr>` +
+    `<th>Módulo</th><th class="num">Microcápsulas</th><th class="num">Entregadas</th>` +
+    `<th class="num">Completadas</th><th>Cierre</th></tr></thead><tbody>` +
+    modulos
+      .map(
+        (m) =>
+          `<tr><td>${m.orden}. ${escapar(m.nombre)}</td>` +
+          `<td class="num">${m.lecciones}</td>` +
+          `<td class="num">${m.entregadas}</td>` +
+          `<td class="num">${m.completadas}</td>` +
+          `<td><span class="mini-barra"><i style="width:${m.pct}%"></i></span>` +
+          `<span class="mini-pct">${m.pct} %</span></td></tr>`,
+      )
+      .join('') +
+    `</tbody></table></div>` +
+    `<p class="nota-dir">«Cierre» es qué proporción de las microcápsulas entregadas quedó completada. ` +
+    `Una entrega sin cierre es alguien que la recibió y no volvió.</p>`
+  );
+}
+
 /**
  * Vista de dirección: si el programa funciona, en una pantalla.
  *
- * Sin un solo dato personal — son todos agregados — así que es la única del panel que se puede
- * proyectar en una reunión sin exponer a nadie.
+ * Sin un solo dato personal —son todos agregados— así que es la única del panel que se puede
+ * proyectar en una reunión sin exponer a nadie. El feed de actividad dice QUÉ pasó y CUÁNDO, nunca
+ * a quién: `audit_log.dialog_id` es el teléfono y no se consulta.
+ *
+ * `pulso` y `catalogo` son opcionales a propósito: si una de esas consultas falla, la vista se
+ * dibuja sin su bloque en vez de caerse entera. Lo que no se puede leer no se rellena con nada.
  */
-export function direccionHtml(r: ResumenDireccion, clpPorTurno: number): string {
+export function direccionHtml(
+  r: ResumenDireccion,
+  clpPorTurno: number,
+  pulso?: PulsoAgente | null,
+  catalogo?: CatalogoPanel | null,
+): string {
   // Sobre TODAS las inscripciones, no solo las vivas: dejar fuera a los cupos vencidos y
   // abandonados subiría la tasa justamente al empeorar el programa.
   const finalizacion = r.inscritas > 0 ? (r.completaron / r.inscritas) * 100 : 0;
@@ -602,19 +936,42 @@ export function direccionHtml(r: ResumenDireccion, clpPorTurno: number): string 
       : '',
   ].filter(Boolean).join('');
 
+  const seg = (ms: number) => (ms / 1000).toFixed(1).replace('.', ',');
+  const chipLatencia =
+    pulso && pulso.latencia.medianaMs != null
+      ? `<div class="chip"><span class="chip-k">latencia del tutor</span>` +
+        `<b>${seg(pulso.latencia.medianaMs)} s</b>` +
+        `<span class="chip-sub">mediana · p90 ${pulso.latencia.p90Ms != null ? seg(pulso.latencia.p90Ms) + ' s' : '—'} · ${pulso.latencia.muestras.toLocaleString('es-CL')} turnos en 24 h</span></div>`
+      : '';
+
   return (
     `<div class="dir">` +
+    `<div class="dir-cab">` +
+    `<div>` +
     `<h1>Programa de Alfabetización en IA</h1>` +
-    `<p class="sub">Actualizado ${escapar(fecha(r.generadoEn))} · hora de Chile</p>` +
+    `<p class="vivo"><span class="latido" aria-hidden="true"></span>` +
+    `Datos en vivo · actualizado ${escapar(horaChile(r.generadoEn))} · hora de Chile</p>` +
+    `</div>` +
+    chipLatencia +
+    `</div>` +
 
     `<div class="kpis">` +
-    `<div class="kpi"><b>${r.registradas.toLocaleString('es-CL')}</b><span>personas registradas</span></div>` +
-    `<div class="kpi"><b>${r.cursando.toLocaleString('es-CL')}</b><span>cursando ahora</span></div>` +
-    `<div class="kpi kpi-ok"><b>${r.certificadas.toLocaleString('es-CL')}</b><span>certificados emitidos</span></div>` +
-    `<div class="kpi"><b>${finalizacion.toFixed(0)} %</b><span>finalización de quienes se inscriben</span></div>` +
+    `<div class="kpi"><span class="punto"></span><b>${r.registradas.toLocaleString('es-CL')}</b><span>personas registradas</span></div>` +
+    `<div class="kpi"><span class="punto"></span><b>${r.cursando.toLocaleString('es-CL')}</b><span>cursando ahora</span></div>` +
+    `<div class="kpi kpi-ok"><span class="punto"></span><b>${r.certificadas.toLocaleString('es-CL')}</b><span>certificados emitidos</span></div>` +
+    `<div class="kpi"><span class="punto"></span><b>${finalizacion.toFixed(0)} %</b><span>finalización de quienes se inscriben</span></div>` +
+    `<div class="kpi"><span class="punto"></span><b>${r.turnos.toLocaleString('es-CL')}</b><span>turnos con el tutor</span></div>` +
     `</div>` +
 
     (alertas ? `<div class="alertas">${alertas}</div>` : '') +
+
+    (pulso
+      ? `<section class="caja-dir caja-ancha">` +
+        `<div class="h2-fila"><h2>El ciclo funciona solo</h2>` +
+        `<span class="pastilla pastilla-acento">sin intervención humana</span></div>` +
+        cicloHtml(pulso.ciclo) +
+        `</section>`
+      : '') +
 
     `<div class="dos">` +
     `<section class="caja-dir">` +
@@ -625,7 +982,7 @@ export function direccionHtml(r: ResumenDireccion, clpPorTurno: number): string 
     peldano('Terminaron el curso', r.completaron, r.registradas, 'var(--p-bien)') +
     peldano('Recibieron certificado', r.certificadas, r.registradas, 'var(--p-bien)') +
     (r.certificadasPrevias > 0
-      ? `<p class="nota-dir" style="margin:.7rem 0 0">Hay además ${r.certificadasPrevias} certificado${r.certificadasPrevias === 1 ? '' : 's'} de versiones anteriores del curso, fuera de este embudo.</p>`
+      ? `<p class="nota-dir" style="margin:var(--space-4) 0 0">Hay además ${r.certificadasPrevias} certificado${r.certificadasPrevias === 1 ? '' : 's'} de versiones anteriores del curso, fuera de este embudo.</p>`
       : '') +
     `</section>` +
 
@@ -636,6 +993,21 @@ export function direccionHtml(r: ResumenDireccion, clpPorTurno: number): string 
     `<g transform="translate(4,8)">${barras(avance, 332, 142, 'var(--color-accent-500)')}</g></svg>` +
     `</section>` +
     `</div>` +
+
+    (pulso
+      ? `<div class="dos">` +
+        `<section class="caja-dir">` +
+        `<h2>Interacciones por hora</h2>` +
+        `<p class="nota-dir">Últimas 14 horas.</p>` +
+        barrasHoras(pulso.porHora) +
+        `</section>` +
+        `<section class="caja-dir">` +
+        `<div class="h2-fila"><h2>Actividad del agente</h2>` +
+        `<span class="pastilla pastilla-off">últimos 14 eventos</span></div>` +
+        feedHtml(pulso.recientes) +
+        `</section>` +
+        `</div>`
+      : '') +
 
     `<div class="dos">` +
     `<section class="caja-dir">` +
@@ -653,9 +1025,23 @@ export function direccionHtml(r: ResumenDireccion, clpPorTurno: number): string 
       ? `<div><b>${clp(porCertificado)}</b><span>por certificado emitido</span></div>`
       : `<div><b>—</b><span>por certificado (aún sin emitir)</span></div>`) +
     `</div>` +
-    `<p class="nota-dir">Solo el modelo de lenguaje, que es el costo variable por estudiante. Los mensajes de WhatsApp dentro de la conversación no tienen tarifa; la infraestructura corre del orden de CLP 8.000 al mes.</p>` +
+    `<p class="nota-dir">Solo el modelo de lenguaje, que es el costo variable por estudiante. Los ` +
+    `mensajes de WhatsApp dentro de la conversación no tienen tarifa; la infraestructura corre del ` +
+    `orden de CLP 8.000 al mes.</p>` +
     `</section>` +
     `</div>` +
+
+    (catalogo
+      ? `<section class="caja-dir caja-ancha">` +
+        `<div class="h2-fila"><h2>Cursos cargados en el agente</h2>` +
+        `<span class="pastilla pastilla-off">${catalogo.cursos.length} en la base</span></div>` +
+        cursosHtml(catalogo.cursos) +
+        `</section>` +
+        `<section class="caja-dir caja-ancha">` +
+        `<h2>Avance por módulo</h2>` +
+        modulosHtml(catalogo.modulos) +
+        `</section>`
+      : '') +
     `</div>`
   );
 }

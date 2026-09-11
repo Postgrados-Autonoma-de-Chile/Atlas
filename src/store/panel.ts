@@ -410,3 +410,224 @@ export async function resumenDireccion(): Promise<ResumenDireccion | null> {
     return null;
   }
 }
+
+/**
+ * Pulso del agente: qué está haciendo ATLAS ahora mismo.
+ *
+ * Es la parte "viva" del panel, y por eso va aparte de `resumenDireccion`: el embudo se mueve en
+ * semanas y se cachea 2 minutos, esto se mueve en minutos y se cachea 30 segundos. Mezclarlos
+ * obligaría a elegir un solo TTL y uno de los dos quedaría mal servido.
+ *
+ * TODO sale de `audit_log`, que es el registro real de eventos del sistema — no hay una tabla de
+ * métricas que alguien tenga que mantener en paralelo. Y NO se lee `dialog_id`: es el teléfono de
+ * la persona, y esta vista existe precisamente para poder mostrarse sin exponer a nadie. El feed
+ * dice qué pasó y cuándo, nunca a quién.
+ */
+export type PulsoAgente = {
+  /** Interacciones por hora, últimas 14 h en hora de Chile. */
+  porHora: { hora: string; turnos: number; eventos: number }[];
+  /** Latencia de respuesta del tutor, sobre las últimas 24 h. */
+  latencia: { medianaMs: number | null; p90Ms: number | null; muestras: number };
+  /** Eventos por tipo en las últimas 24 h, del más frecuente al menos. */
+  porTipo: { tipo: string; n: number }[];
+  /** Los últimos eventos del agente. Sin identificar a nadie: tipo y hora. */
+  recientes: { tipo: string; en: Date }[];
+  /** El ciclo de hoy, etapa por etapa. Las etapas son eventos reales, no una narrativa. */
+  ciclo: { clave: string; n: number }[];
+  generadoEn: Date;
+};
+
+const CACHE_PULSO = 'panel:pulso';
+const CACHE_PULSO_TTL = 30;
+
+export async function pulsoAgente(): Promise<PulsoAgente | null> {
+  const cacheado = await getJson<PulsoAgente>(CACHE_PULSO);
+  if (cacheado) {
+    return {
+      ...cacheado,
+      recientes: cacheado.recientes.map((r) => ({ ...r, en: new Date(r.en) })),
+      generadoEn: new Date(cacheado.generadoEn),
+    };
+  }
+
+  const pool = getPool();
+  if (!pool) return null;
+  try {
+    const [horas, latencia, tipos, recientes, ciclo] = await Promise.all([
+      // Las horas vacías también son un dato: generate_series las rellena, porque un hueco en el
+      // eje se leería como una hora que no existió. Truncado en hora de Chile.
+      pool.query(
+        `SELECT to_char(s.h, 'HH24') AS hora,
+                COALESCE(a.turnos, 0)::int AS turnos, COALESCE(a.eventos, 0)::int AS eventos
+           FROM generate_series(
+                  date_trunc('hour', now() AT TIME ZONE 'America/Santiago') - interval '13 hours',
+                  date_trunc('hour', now() AT TIME ZONE 'America/Santiago'),
+                  interval '1 hour') AS s(h)
+           LEFT JOIN (
+             SELECT date_trunc('hour', ts AT TIME ZONE 'America/Santiago') AS h,
+                    count(*) FILTER (WHERE type = 'turn')::int AS turnos,
+                    count(*)::int AS eventos
+               FROM audit_log WHERE ts > now() - interval '15 hours'
+              GROUP BY 1
+           ) a ON a.h = s.h
+          ORDER BY s.h`,
+      ),
+      // La mediana y el p90, no el promedio: un turno de certificación de 70 s arrastra la media y
+      // deja de describir lo que le pasa a la mayoría.
+      pool.query(
+        `SELECT count(*)::int AS muestras,
+                percentile_disc(0.5) WITHIN GROUP (ORDER BY (detail->>'responseMs')::bigint) AS mediana,
+                percentile_disc(0.9) WITHIN GROUP (ORDER BY (detail->>'responseMs')::bigint) AS p90
+           FROM audit_log
+          WHERE type = 'turn' AND ts > now() - interval '24 hours'
+            AND detail ? 'responseMs' AND (detail->>'responseMs') ~ '^[0-9]+$'`,
+      ),
+      pool.query(
+        `SELECT type AS tipo, count(*)::int AS n FROM audit_log
+          WHERE ts > now() - interval '24 hours' AND type <> 'turn'
+          GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 12`,
+      ),
+      // 'turn' se excluye del feed: acompaña a cada interacción y taparía todo lo demás, que es
+      // justamente lo que cuenta la historia (se entregó una microcápsula, se emitió un certificado).
+      pool.query(
+        `SELECT type AS tipo, ts FROM audit_log
+          WHERE type <> 'turn' ORDER BY ts DESC LIMIT 14`,
+      ),
+      pool.query(
+        `SELECT
+           count(*) FILTER (WHERE type = 'registro_completo')::int AS registro,
+           count(*) FILTER (WHERE type = 'caracterizacion_completada')::int AS cuestionario,
+           count(*) FILTER (WHERE type IN ('inscripcion','inscripcion_reactivada'))::int AS inscripcion,
+           count(*) FILTER (WHERE type = 'leccion_entregada')::int AS entregada,
+           count(*) FILTER (WHERE type = 'leccion_completada')::int AS completada,
+           count(*) FILTER (WHERE type = 'evaluacion_finalizada')::int AS evaluacion,
+           count(*) FILTER (WHERE type = 'certificado_emitido')::int AS certificado,
+           count(*) FILTER (WHERE type = 'recordatorio_enviado')::int AS recordatorio,
+           count(*) FILTER (WHERE type = 'rag_busqueda')::int AS consulta
+           FROM audit_log
+          WHERE ts >= date_trunc('day', now() AT TIME ZONE 'America/Santiago')
+                       AT TIME ZONE 'America/Santiago'`,
+      ),
+    ]);
+
+    const l = latencia.rows[0] ?? {};
+    const c = ciclo.rows[0] ?? {};
+    const salida: PulsoAgente = {
+      porHora: horas.rows.map((r: any) => ({ hora: r.hora, turnos: r.turnos, eventos: r.eventos })),
+      latencia: {
+        muestras: l.muestras ?? 0,
+        medianaMs: l.mediana != null ? Number(l.mediana) : null,
+        p90Ms: l.p90 != null ? Number(l.p90) : null,
+      },
+      porTipo: tipos.rows.map((r: any) => ({ tipo: r.tipo, n: r.n })),
+      recientes: recientes.rows.map((r: any) => ({ tipo: r.tipo, en: new Date(r.ts) })),
+      ciclo: [
+        { clave: 'registro', n: c.registro ?? 0 },
+        { clave: 'cuestionario', n: c.cuestionario ?? 0 },
+        { clave: 'inscripcion', n: c.inscripcion ?? 0 },
+        { clave: 'entregada', n: c.entregada ?? 0 },
+        { clave: 'completada', n: c.completada ?? 0 },
+        { clave: 'evaluacion', n: c.evaluacion ?? 0 },
+        { clave: 'certificado', n: c.certificado ?? 0 },
+        { clave: 'recordatorio', n: c.recordatorio ?? 0 },
+        { clave: 'consulta', n: c.consulta ?? 0 },
+      ],
+      generadoEn: new Date(),
+    };
+    await setJson(CACHE_PULSO, salida, CACHE_PULSO_TTL);
+    return salida;
+  } catch (e) {
+    log.warn('panel: pulsoAgente falló', { err: String(e) });
+    return null;
+  }
+}
+
+/**
+ * El catálogo que el agente tiene cargado, y cómo avanza la gente por él.
+ *
+ * Son pocos cursos y pocos módulos, así que las subconsultas por curso no son un problema; lo que
+ * las vuelve baratas de todos modos es la caché, porque esto cambia cuando se recarga el currículo
+ * y no cuando alguien escribe por WhatsApp.
+ */
+export type CatalogoPanel = {
+  cursos: {
+    codigo: string; nombre: string; estado: string; modulos: number; lecciones: number;
+    duracionMin: number; inscritas: number; completadas: number; avancePct: number;
+    minutosPromedio: number;
+  }[];
+  modulos: {
+    curso: string; orden: number; nombre: string; lecciones: number;
+    entregadas: number; completadas: number; pct: number;
+  }[];
+  generadoEn: Date;
+};
+
+const CACHE_CATALOGO = 'panel:catalogo';
+const CACHE_CATALOGO_TTL = 300;
+
+export async function catalogoPanel(): Promise<CatalogoPanel | null> {
+  const cacheado = await getJson<CatalogoPanel>(CACHE_CATALOGO);
+  if (cacheado) return { ...cacheado, generadoEn: new Date(cacheado.generadoEn) };
+
+  const pool = getPool();
+  if (!pool) return null;
+  try {
+    const [cursos, modulos] = await Promise.all([
+      pool.query(
+        `SELECT c.codigo, c.nombre, c.estado, c.duracion_min,
+                (SELECT count(*)::int FROM module m WHERE m.course_id = c.id) AS modulos,
+                (SELECT count(*)::int FROM lesson l JOIN module m ON m.id = l.module_id
+                  WHERE m.course_id = c.id) AS lecciones,
+                (SELECT count(*)::int FROM enrollment e WHERE e.course_id = c.id) AS inscritas,
+                (SELECT count(*)::int FROM enrollment e
+                  WHERE e.course_id = c.id AND e.estado = 'completada') AS completadas,
+                (SELECT COALESCE(round(avg(e.minutos_acumulados)), 0)::int FROM enrollment e
+                  WHERE e.course_id = c.id) AS minutos,
+                COALESCE((
+                  SELECT round(avg(x.pct))::int FROM (
+                    SELECT count(lp.id) FILTER (WHERE lp.estado = 'completada')::float
+                           / NULLIF((SELECT count(*) FROM lesson l2 JOIN module m2 ON m2.id = l2.module_id
+                                      WHERE m2.course_id = c.id), 0) * 100 AS pct
+                      FROM enrollment e LEFT JOIN lesson_progress lp ON lp.enrollment_id = e.id
+                     WHERE e.course_id = c.id GROUP BY e.id
+                  ) x), 0) AS avance_pct
+           FROM course c
+          ORDER BY (c.estado = 'activo') DESC, c.codigo`,
+      ),
+      pool.query(
+        `SELECT c.nombre AS curso, m.orden, m.nombre,
+                count(DISTINCT l.id)::int AS lecciones,
+                count(lp.id) FILTER (WHERE lp.estado = 'entregada')::int AS entregadas,
+                count(lp.id) FILTER (WHERE lp.estado = 'completada')::int AS completadas
+           FROM module m
+           JOIN course c ON c.id = m.course_id AND c.estado = 'activo'
+           JOIN lesson l ON l.module_id = m.id
+           LEFT JOIN lesson_progress lp ON lp.lesson_id = l.id
+          GROUP BY c.nombre, m.orden, m.nombre
+          ORDER BY m.orden`,
+      ),
+    ]);
+
+    const salida: CatalogoPanel = {
+      cursos: cursos.rows.map((r: any) => ({
+        codigo: r.codigo, nombre: r.nombre, estado: r.estado, modulos: r.modulos,
+        lecciones: r.lecciones, duracionMin: r.duracion_min, inscritas: r.inscritas,
+        completadas: r.completadas, avancePct: r.avance_pct, minutosPromedio: r.minutos,
+      })),
+      modulos: modulos.rows.map((r: any) => {
+        const total = r.entregadas + r.completadas;
+        return {
+          curso: r.curso, orden: r.orden, nombre: r.nombre, lecciones: r.lecciones,
+          entregadas: r.entregadas, completadas: r.completadas,
+          pct: total > 0 ? Math.round((r.completadas / total) * 100) : 0,
+        };
+      }),
+      generadoEn: new Date(),
+    };
+    await setJson(CACHE_CATALOGO, salida, CACHE_CATALOGO_TTL);
+    return salida;
+  } catch (e) {
+    log.warn('panel: catalogoPanel falló', { err: String(e) });
+    return null;
+  }
+}
