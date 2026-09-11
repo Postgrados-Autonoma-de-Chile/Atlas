@@ -1,4 +1,4 @@
-import type { ResumenPanel, FilaPanel, PreguntaAgregada, PaginaCaracterizacion } from '../store/panel';
+import type { ResumenPanel, FilaPanel, PreguntaAgregada, PaginaCaracterizacion, ResumenDireccion } from '../store/panel';
 
 // Render del panel de cohorte. HTML autocontenido, sin dependencias externas: se abre desde un
 // archivo guardado en el disco de quien lo pidió y funciona sin red.
@@ -74,6 +74,41 @@ export const PANEL_CSS = `
       .mas[disabled]{opacity:.5;cursor:default}
       .fin{margin:.9rem 0 0;font-size:.78rem;color:#8a8a8a}
       .alerta{display:inline-block;margin-left:.35rem;padding:.05rem .35rem;border-radius:4px;background:#fdecea;color:#b3261e;font-size:.7rem;font-weight:600;vertical-align:middle}
+
+      /* Vista de dirección. Otra lectura: no "a quién le escribo" sino "el programa funciona".
+         Las cifras van en serif del sistema —no hay recursos remotos, este archivo abre sin red—
+         para que la escala se lea antes que el texto que la rodea. */
+      .dir{--serif:'Iowan Old Style','Palatino Linotype',Palatino,Georgia,serif}
+      .dir h1{font-size:1.55rem;letter-spacing:-.015em;font-weight:600}
+      .dir h2{margin:0 0 .7rem;font-size:.72rem;text-transform:uppercase;letter-spacing:.07em;color:#667;font-weight:700}
+      .nota-dir{margin:-.35rem 0 .8rem;font-size:.75rem;color:#8a8a8a;line-height:1.4}
+      .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(8.5rem,1fr));gap:.6rem;margin:0 0 1rem}
+      .kpi{padding:.85rem .95rem .8rem;background:#f6f7f9;border-radius:10px;border-top:3px solid #273473}
+      .kpi.kpi-ok{border-top-color:#1d7a5f}
+      .kpi b{display:block;font-family:var(--serif);font-size:2.1rem;line-height:1;color:#273473;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+      .kpi.kpi-ok b{color:#1d7a5f}
+      .kpi span{display:block;margin-top:.3rem;font-size:.74rem;color:#667;line-height:1.3}
+      .alertas{display:grid;gap:.45rem;margin:0 0 1.1rem}
+      .al{display:flex;align-items:baseline;gap:.6rem;padding:.55rem .8rem;border-radius:8px;font-size:.8rem;line-height:1.35}
+      .al b{font-family:var(--serif);font-size:1.15rem;font-variant-numeric:tabular-nums;flex:none}
+      .al-roja{background:#fdecea;color:#8c1d18;border-left:3px solid #b3261e}
+      .al-ambar{background:#fff8e6;color:#5a4a00;border-left:3px solid #d4a017}
+      .dos{display:grid;gap:.9rem;margin:0 0 .9rem}
+      @media(min-width:62rem){.dos{grid-template-columns:1fr 1fr;align-items:start}}
+      .caja-dir{border:1px solid #e7e9ef;border-radius:10px;padding:1rem 1.1rem}
+      .caja-dir svg{width:100%;height:auto;display:block}
+      .g-val{font-size:8px;fill:#667;font-variant-numeric:tabular-nums}
+      .g-eje{font-size:7.5px;fill:#9a9aa5;font-variant-numeric:tabular-nums}
+      .pel{margin:0 0 .7rem}
+      .pel:last-child{margin-bottom:0}
+      .pel-cab{display:flex;justify-content:space-between;align-items:baseline;gap:.5rem;font-size:.82rem}
+      .pel-cab b{font-family:var(--serif);font-size:1.05rem;font-variant-numeric:tabular-nums}
+      .pel-barra{height:.55rem;background:#eceef5;border-radius:3px;overflow:hidden;margin:.2rem 0 .15rem}
+      .pel-barra i{display:block;height:100%;border-radius:3px}
+      .pel-pct{font-size:.7rem;color:#9a9aa5;font-variant-numeric:tabular-nums}
+      .costos{display:flex;gap:1.6rem;flex-wrap:wrap;margin:0 0 .7rem}
+      .costos b{display:block;font-family:var(--serif);font-size:1.6rem;line-height:1.1;color:#273473;font-variant-numeric:tabular-nums}
+      .costos span{font-size:.74rem;color:#667}
     `;
 
 /**
@@ -193,7 +228,8 @@ export function panelAccesoHtml(refrescoSeg = 60): string {
     `</div>` +
     `<div id="vista" hidden>` +
     `<div class="barra">` +
-    `<button class="tab activa" type="button" data-ruta="/panel/cohorte">Cohorte</button>` +
+    `<button class="tab activa" type="button" data-ruta="/panel/direccion">Programa</button>` +
+    `<button class="tab" type="button" data-ruta="/panel/cohorte">Cohorte</button>` +
     `<button class="tab" type="button" data-ruta="/panel/caracterizacion">Caracterización</button>` +
     `<span id="estado">cargando…</span>` +
     `<button id="recargar" type="button">Actualizar</button>` +
@@ -202,7 +238,7 @@ export function panelAccesoHtml(refrescoSeg = 60): string {
     `</div>` +
     `<script>
 (function(){
-  var CLAVE='atlas.panel.token', REFRESCO=${refrescoSeg}*1000, RUTA='/panel/cohorte';
+  var CLAVE='atlas.panel.token', REFRESCO=${refrescoSeg}*1000, RUTA='/panel/direccion';
   var acceso=document.getElementById('acceso'), vista=document.getElementById('vista');
   var err=document.getElementById('err'), estado=document.getElementById('estado');
   var timer=null;
@@ -351,5 +387,119 @@ export function filasDetalleHtml(pagina: PaginaCaracterizacion, conCabecera: boo
     pagina.columnas.map((c) => `<th title="${escapar(c.enunciado)}">${escapar(c.codigo)}</th>`).join('') +
     `</tr></thead><tbody>${filas || '<tr><td colspan="14">Nadie ha completado el cuestionario.</td></tr>'}</tbody>` +
     `</table></div>${boton}`
+  );
+}
+
+/** Barras de una serie, con la altura proporcional al máximo y el valor sobre cada una. */
+function barras(datos: { etiqueta: string; n: number }[], ancho: number, alto: number, color: string): string {
+  if (!datos.length) return '';
+  const max = Math.max(...datos.map((d) => d.n), 1);
+  const gap = 6;
+  const w = Math.max(6, (ancho - gap * (datos.length - 1)) / datos.length);
+  const base = alto - 22;
+  return datos
+    .map((d, i) => {
+      const h = d.n === 0 ? 1.5 : Math.max(3, (d.n / max) * (base - 16));
+      const x = i * (w + gap);
+      const y = base - h;
+      return (
+        `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${color}"></rect>` +
+        (d.n > 0 ? `<text class="g-val" x="${(x + w / 2).toFixed(1)}" y="${(y - 4).toFixed(1)}" text-anchor="middle">${d.n}</text>` : '') +
+        `<text class="g-eje" x="${(x + w / 2).toFixed(1)}" y="${(base + 13).toFixed(1)}" text-anchor="middle">${escapar(d.etiqueta)}</text>`
+      );
+    })
+    .join('');
+}
+
+/** Un peldaño del embudo, con su proporción respecto al primero. */
+function peldano(etiqueta: string, n: number, tope: number, color: string): string {
+  const pct = tope ? (n / tope) * 100 : 0;
+  return (
+    `<div class="pel">` +
+    `<div class="pel-cab"><span>${escapar(etiqueta)}</span><b>${n.toLocaleString('es-CL')}</b></div>` +
+    `<div class="pel-barra"><i style="width:${Math.max(pct, n > 0 ? 2 : 0).toFixed(1)}%;background:${color}"></i></div>` +
+    `<div class="pel-pct">${pct.toFixed(0)} % de las registradas</div>` +
+    `</div>`
+  );
+}
+
+/**
+ * Vista de dirección: si el programa funciona, en una pantalla.
+ *
+ * Sin un solo dato personal — son todos agregados — así que es la única del panel que se puede
+ * proyectar en una reunión sin exponer a nadie.
+ */
+export function direccionHtml(r: ResumenDireccion, clpPorTurno: number): string {
+  // Sobre TODAS las inscripciones, no solo las vivas: dejar fuera a los cupos vencidos y
+  // abandonados subiría la tasa justamente al empeorar el programa.
+  const finalizacion = r.inscritas > 0 ? (r.completaron / r.inscritas) * 100 : 0;
+  const costoModelo = r.turnos * clpPorTurno;
+  const porCertificado = r.certificadas > 0 ? costoModelo / r.certificadas : 0;
+  const clp = (x: number) => 'CLP ' + Math.round(x).toLocaleString('es-CL');
+
+  const dias = r.registrosPorDia.map((d) => ({ etiqueta: d.dia.slice(8), n: d.n }));
+  const avance = r.avance.map((a) => ({ etiqueta: String(a.completadas), n: a.personas }));
+
+  const alertas = [
+    r.alertasBienestar > 0
+      ? `<div class="al al-roja"><b>${r.alertasBienestar}</b><span>contenciones por señal de riesgo vital — sin seguimiento humano definido</span></div>`
+      : '',
+    r.cuposPorVencer > 0
+      ? `<div class="al al-ambar"><b>${r.cuposPorVencer}</b><span>cupos vencen en los próximos 7 días</span></div>`
+      : '',
+  ].filter(Boolean).join('');
+
+  return (
+    `<div class="dir">` +
+    `<h1>Programa de Alfabetización en IA</h1>` +
+    `<p class="sub">Actualizado ${escapar(fecha(r.generadoEn))} · hora de Chile</p>` +
+
+    `<div class="kpis">` +
+    `<div class="kpi"><b>${r.registradas.toLocaleString('es-CL')}</b><span>personas registradas</span></div>` +
+    `<div class="kpi"><b>${r.cursando.toLocaleString('es-CL')}</b><span>cursando ahora</span></div>` +
+    `<div class="kpi kpi-ok"><b>${r.certificadas.toLocaleString('es-CL')}</b><span>certificados emitidos</span></div>` +
+    `<div class="kpi"><b>${finalizacion.toFixed(0)} %</b><span>finalización de quienes se inscriben</span></div>` +
+    `</div>` +
+
+    (alertas ? `<div class="alertas">${alertas}</div>` : '') +
+
+    `<div class="dos">` +
+    `<section class="caja-dir">` +
+    `<h2>Del registro al certificado</h2>` +
+    peldano('Se registraron', r.registradas, r.registradas, 'var(--p-navy)') +
+    peldano('Completaron el cuestionario', r.conCuestionario, r.registradas, 'var(--p-navy)') +
+    peldano('Se inscribieron al curso', r.inscritas, r.registradas, 'var(--p-navy)') +
+    peldano('Terminaron el curso', r.completaron, r.registradas, 'var(--p-verde)') +
+    peldano('Recibieron certificado', r.certificadas, r.registradas, 'var(--p-verde)') +
+    `</section>` +
+
+    `<section class="caja-dir">` +
+    `<h2>Dónde está cada estudiante</h2>` +
+    `<p class="nota-dir">Personas por microcápsulas completadas, de 0 a ${r.totalMicrocapsulas}.</p>` +
+    `<svg viewBox="0 0 340 150" role="img" aria-label="Distribución de estudiantes por microcápsulas completadas">` +
+    `<g transform="translate(4,8)">${barras(avance, 332, 142, 'var(--p-navy)')}</g></svg>` +
+    `</section>` +
+    `</div>` +
+
+    `<div class="dos">` +
+    `<section class="caja-dir">` +
+    `<h2>Altas por día</h2>` +
+    `<p class="nota-dir">Últimos 14 días.</p>` +
+    `<svg viewBox="0 0 340 150" role="img" aria-label="Personas registradas por día en los últimos 14 días">` +
+    `<g transform="translate(4,8)">${barras(dias, 332, 142, 'var(--p-verde)')}</g></svg>` +
+    `</section>` +
+
+    `<section class="caja-dir">` +
+    `<h2>Costo del modelo a la fecha</h2>` +
+    `<div class="costos">` +
+    `<div><b>${clp(costoModelo)}</b><span>acumulado · ${r.turnos.toLocaleString('es-CL')} turnos</span></div>` +
+    (r.certificadas > 0
+      ? `<div><b>${clp(porCertificado)}</b><span>por certificado emitido</span></div>`
+      : `<div><b>—</b><span>por certificado (aún sin emitir)</span></div>`) +
+    `</div>` +
+    `<p class="nota-dir">Solo el modelo de lenguaje, que es el costo variable por estudiante. Los mensajes de WhatsApp dentro de la conversación no tienen tarifa; la infraestructura corre del orden de CLP 8.000 al mes.</p>` +
+    `</section>` +
+    `</div>` +
+    `</div>`
   );
 }

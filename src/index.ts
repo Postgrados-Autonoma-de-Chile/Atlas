@@ -11,8 +11,8 @@ import { dbResumenNegocio } from './store/metricasNegocio';
 import { kvKind, kvVivo, once } from './store/kv';
 import { verificarPorFolio } from './store/certificados';
 import { requireDashboardToken } from './routes/guard';
-import { panelCohorte, caracterizacionAgregada, caracterizacionPagina } from './store/panel';
-import { panelCohorteHtml, panelAccesoHtml, caracterizacionHtml, filasDetalleHtml } from './obs/panelHtml';
+import { panelCohorte, caracterizacionAgregada, caracterizacionPagina, resumenDireccion } from './store/panel';
+import { panelCohorteHtml, panelAccesoHtml, caracterizacionHtml, filasDetalleHtml, direccionHtml } from './obs/panelHtml';
 import { rateLimit } from './routes/rateLimit';
 import { planificar, despachar } from './reminders/motor';
 import { messagingProvider } from './messaging';
@@ -139,6 +139,19 @@ app.get('/panel', strictLimiter, (_req, res) => {
   res.setHeader('X-Robots-Tag', 'noindex, nofollow');
   res.setHeader('Cache-Control', 'no-store');
   res.type('html').send(panelAccesoHtml(config.panelRefrescoSeg));
+});
+
+// Vista de dirección: si el programa funciona, en una pantalla.
+//
+// Es la ÚNICA vista del panel sin datos personales —son todos agregados—, así que es la que se puede
+// proyectar en una reunión sin exponer a nadie. Igual va detrás del token: quién se inscribe y
+// cuántos abandonan tampoco es información pública.
+app.get('/panel/direccion', strictLimiter, requireDashboardToken, async (_req, res) => {
+  const r = await resumenDireccion();
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  res.setHeader('Cache-Control', 'no-store');
+  if (!r) return res.status(503).send('Base de datos no disponible.');
+  res.type('html').send(direccionHtml(r, config.panelClpPorTurno));
 });
 
 // Los datos. El limitador estricto va además del token: es el único endpoint con PII donde alguien

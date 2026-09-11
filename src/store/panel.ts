@@ -276,3 +276,124 @@ export async function caracterizacionPagina(
     return null;
   }
 }
+
+// ── Vista de dirección ──────────────────────────────────────────────────────
+//
+// Otro lector, otra pregunta. El operador necesita saber a quién escribirle; quien dirige el
+// programa necesita saber si el programa funciona: cuánta gente entra, dónde se cae, cuántos
+// certificados salen y cuánto cuesta cada uno.
+//
+// Todo son agregados, así que no hay datos personales en esta vista — y por eso es la que se puede
+// mostrar en una reunión sin exponer a nadie.
+
+export type ResumenDireccion = {
+  registradas: number;
+  conCuestionario: number;
+  /** Personas que alguna vez se inscribieron, en cualquier estado. Es el peldaño del embudo. */
+  inscritas: number;
+  /** Inscripciones vivas hoy. NO es un peldaño del embudo: es una foto del presente. */
+  cursando: number;
+  completaron: number;
+  certificadas: number;
+  /** Personas por cantidad de microcápsulas completadas, de 0 al total del curso. */
+  avance: { completadas: number; personas: number }[];
+  totalMicrocapsulas: number;
+  /** Altas por día, del más antiguo al más reciente. */
+  registrosPorDia: { dia: string; n: number }[];
+  turnos: number;
+  /** Contenciones por señal de riesgo vital. Un número, sin identificar a nadie. */
+  alertasBienestar: number;
+  /** Cupos que vencen dentro de los próximos 7 días. */
+  cuposPorVencer: number;
+  generadoEn: Date;
+};
+
+const CACHE_DIRECCION = 'panel:direccion';
+const CACHE_DIRECCION_TTL = 120;
+
+export async function resumenDireccion(): Promise<ResumenDireccion | null> {
+  const cacheado = await getJson<ResumenDireccion>(CACHE_DIRECCION);
+  if (cacheado) return { ...cacheado, generadoEn: new Date(cacheado.generadoEn) };
+
+  const pool = getPool();
+  if (!pool) return null;
+  try {
+    const [embudo, avance, altas, actividad, cupos] = await Promise.all([
+      pool.query(
+        `SELECT
+           (SELECT count(*)::int FROM person) AS registradas,
+           (SELECT count(*)::int FROM person WHERE caracterizacion_completada_en IS NOT NULL) AS con_cuestionario,
+           (SELECT count(*)::int FROM enrollment e JOIN course c ON c.id=e.course_id
+             WHERE c.estado='activo') AS inscritas,
+           (SELECT count(*)::int FROM enrollment e JOIN course c ON c.id=e.course_id
+             WHERE c.estado='activo' AND e.estado='activa') AS cursando,
+           (SELECT count(*)::int FROM enrollment e JOIN course c ON c.id=e.course_id
+             WHERE c.estado='activo' AND e.estado='completada') AS completaron,
+           (SELECT count(*)::int FROM certificate WHERE folio IS NOT NULL) AS certificadas,
+           (SELECT count(*)::int FROM lesson l JOIN module m ON m.id=l.module_id
+             JOIN course c ON c.id=m.course_id WHERE c.estado='activo') AS total_micro`,
+      ),
+      pool.query(
+        `SELECT completadas, count(*)::int AS personas FROM (
+           SELECT e.id, count(*) FILTER (WHERE lp.estado='completada')::int AS completadas
+             FROM enrollment e
+             JOIN course c ON c.id = e.course_id AND c.estado='activo'
+             LEFT JOIN lesson_progress lp ON lp.enrollment_id = e.id
+            GROUP BY e.id
+         ) x GROUP BY completadas ORDER BY completadas`,
+      ),
+      pool.query(
+        // generate_series rellena los días sin altas: un hueco en el eje se leería como un día
+        // que no existió. La fecha se trunca en hora de Chile —no en UTC— porque el eje lo mira
+        // alguien que cuenta los días acá; y así el corte del día no se mueve con el horario de
+        // verano, cosa que sí pasaría sumando intervalos de 24 horas.
+        `SELECT to_char(s.d, 'YYYY-MM-DD') AS dia, COALESCE(c.n, 0)::int AS n
+           FROM generate_series(
+                  date_trunc('day', now() AT TIME ZONE 'America/Santiago') - interval '13 days',
+                  date_trunc('day', now() AT TIME ZONE 'America/Santiago'),
+                  interval '1 day') AS s(d)
+           LEFT JOIN (
+             SELECT date_trunc('day', created_at AT TIME ZONE 'America/Santiago') AS d,
+                    count(*)::int AS n
+               FROM person WHERE created_at > now() - interval '15 days'
+              GROUP BY 1
+           ) c ON c.d = s.d
+          ORDER BY s.d`,
+      ),
+      pool.query(
+        `SELECT
+           count(*) FILTER (WHERE type='turn')::int AS turnos,
+           count(*) FILTER (WHERE type='alerta_bienestar')::int AS alertas
+           FROM audit_log`,
+      ),
+      pool.query(
+        `SELECT count(*)::int AS n FROM enrollment e JOIN course c ON c.id=e.course_id
+          WHERE c.estado='activo' AND e.estado='activa'
+            AND e.vence_en IS NOT NULL AND e.vence_en BETWEEN now() AND now() + interval '7 days'`,
+      ),
+    ]);
+
+    const f = embudo.rows[0];
+    const total = f.total_micro ?? 0;
+    // La distribución se completa con los ceros: un hueco en el eje es tan informativo como una
+    // barra, y sin rellenar se dibujaría un gráfico con tramos que no existen.
+    const porAvance = new Map<number, number>(avance.rows.map((r: any) => [r.completadas, r.personas]));
+    const salida: ResumenDireccion = {
+      registradas: f.registradas, conCuestionario: f.con_cuestionario,
+      inscritas: f.inscritas, cursando: f.cursando,
+      completaron: f.completaron, certificadas: f.certificadas,
+      totalMicrocapsulas: total,
+      avance: Array.from({ length: total + 1 }, (_, i) => ({ completadas: i, personas: porAvance.get(i) ?? 0 })),
+      registrosPorDia: altas.rows.map((r: any) => ({ dia: r.dia, n: r.n })),
+      turnos: actividad.rows[0]?.turnos ?? 0,
+      alertasBienestar: actividad.rows[0]?.alertas ?? 0,
+      cuposPorVencer: cupos.rows[0]?.n ?? 0,
+      generadoEn: new Date(),
+    };
+    await setJson(CACHE_DIRECCION, salida, CACHE_DIRECCION_TTL);
+    return salida;
+  } catch (e) {
+    log.warn('panel: resumenDireccion falló', { err: String(e) });
+    return null;
+  }
+}

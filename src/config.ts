@@ -90,6 +90,14 @@ const Env = z.object({
   MEMORY_TTL_HOURS: z.coerce.number().int().positive().default(48),
   /** Cada cuánto se refresca solo el panel de cohorte, en segundos. */
   PANEL_REFRESCO_SEG: z.coerce.number().int().min(10).max(3600).default(60),
+  /**
+   * Costo medio de un turno del tutor, en pesos. Lo usa la vista de dirección para poner precio al
+   * programa. El valor por defecto es una MEDICIÓN, no un supuesto: USD 0,00967 por turno sobre 218
+   * turnos reales del piloto (58 % de la entrada servida desde caché), convertidos al tipo de cambio
+   * del export de facturación de GCP, 934,32 CLP/USD. Se pone acá y no en el render para que se
+   * pueda corregir cuando cambien el precio del modelo o el dólar, y para que el número tenga dueño.
+   */
+  PANEL_CLP_POR_TURNO: z.coerce.number().min(0).default(9.03),
   MEMORY_MAX_TURNS: z.coerce.number().int().positive().default(24),
 
   // ── Pub/Sub (F11: split webhook/worker). Vacío = despacho in-process (dev / piloto 1 servicio) ──
@@ -239,6 +247,7 @@ export const config = {
 
   memoryTtlHours: env.MEMORY_TTL_HOURS,
   panelRefrescoSeg: env.PANEL_REFRESCO_SEG,
+  panelClpPorTurno: env.PANEL_CLP_POR_TURNO,
   memoryMaxTurns: env.MEMORY_MAX_TURNS,
 
   pubsubTopic: env.PUBSUB_TOPIC,
