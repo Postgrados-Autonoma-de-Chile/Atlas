@@ -110,8 +110,14 @@ const Env = z.object({
   SMTP_FROM: z.string().default(''),
 
   // ── Recordatorios (F9) ──
-  /** Nombre de la plantilla utility APROBADA por Meta para recordatorios fuera de ventana 24h. */
+  /** Plantilla utility APROBADA para quien ESTÁ cursando: nombre, pendientes y fecha del cupo. */
   WA_TEMPLATE_RECORDATORIO: z.string().default(''),
+  /**
+   * Plantilla utility para quien se registró y NO tiene inscripción activa. Ancla en el estado del
+   * cuestionario —"completaste 5 de 11"—, que es un proceso que la persona inició: la otra plantilla
+   * habla de un cupo vigente y a esta gente le diría algo falso.
+   */
+  WA_TEMPLATE_CUESTIONARIO: z.string().default(''),
   WA_TEMPLATE_LANG: z.string().default('es'),
   /** Días de inactividad antes de recordar (y ventana del dedupe: máx. 1 recordatorio cada N días). */
   REMINDER_DIAS_INACTIVIDAD: z.coerce.number().int().positive().default(3),
@@ -247,6 +253,7 @@ export const config = {
   smtpFrom: env.SMTP_FROM,
 
   waTemplateRecordatorio: env.WA_TEMPLATE_RECORDATORIO,
+  waTemplateCuestionario: env.WA_TEMPLATE_CUESTIONARIO,
   waTemplateLang: env.WA_TEMPLATE_LANG,
   reminderDiasInactividad: env.REMINDER_DIAS_INACTIVIDAD,
   reminderMaxSinActividad: env.REMINDER_MAX_SIN_ACTIVIDAD,

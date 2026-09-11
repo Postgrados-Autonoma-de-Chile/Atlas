@@ -9,6 +9,7 @@ process.env.NODE_ENV = 'test';
 // La plantilla NO se simula por variable de entorno: `config` es un singleton que se congela al
 // importarse, así que cambiar process.env después no tiene ningún efecto. Se mockea el módulo.
 let plantillaConfigurada = '';
+let plantillaCuestionario = '';
 
 type Rm = { id: string; personId: string; tipo: string; estado: string; clave: string; programadoPara: Date; intentos: number; waMessageId?: string | null };
 const rms = new Map<string, Rm>();
@@ -36,6 +37,7 @@ mock.module('../src/config.ts', {
   namedExports: {
     config: {
       get waTemplateRecordatorio() { return plantillaConfigurada; },
+      get waTemplateCuestionario() { return plantillaCuestionario; },
       waTemplateLang: 'es',
       reminderDiasInactividad: 3,
       reminderMaxSinActividad: 3,
@@ -88,6 +90,7 @@ mock.module('../src/store/caracterizacion.ts', {
     estaCompleta: async () => caracterizacionCompleta,
     respondidas: async () => respondidasSim,
     totalPreguntas: async () => 11,
+    totalPreguntas: async () => 11,
   },
 });
 mock.module('../src/store/cursos.ts', {
@@ -134,6 +137,8 @@ function fakeProvider(fallar = false) {
 
 const reset = () => {
   rms.clear();
+  plantillaConfigurada = '';
+  plantillaCuestionario = '';
   estadoAcad = structuredClone(ESTADO_ACTIVO);
   sinInscripcion = [];
   primerAviso = [];
@@ -508,4 +513,68 @@ test('el mensaje gratuito también dice el plazo', async () => {
   const { p, textos } = fakeProvider();
   await despachar(p, LUNES_MEDIODIA);
   assert.match(textos[0], /vence el \*11 de octubre\*/);
+});
+
+// ── Cada segmento con SU plantilla ──────────────────────────────────────────
+//
+// La plantilla del cupo afirma "tu cupo vence el X": solo es cierta para quien tiene inscripción
+// vigente. A quien se registró y nunca empezó hay que hablarle de lo que sí inició — el
+// cuestionario— o no hablarle. Usar una plantilla en el segmento de la otra sería mandar un dato
+// falso para ahorrarse una aprobación.
+
+test('a quien no está cursando se le manda la plantilla del cuestionario', async () => {
+  reset();
+  candidatos = [];
+  sinInscripcion = [sin()];
+  estadoAcad = { inscrito: false };
+  plantillaCuestionario = 'estado_cuestionario_inicial';
+  respondidasSim = 5;
+  caracterizacionCompleta = false;
+  await planificar(LUNES_MEDIODIA);
+  const rm = [...rms.values()][0];
+  rm.programadoPara = FUTURO();
+  await kvDel('ult_in:+56900050001');
+  const { p, plantillas } = fakeProvider();
+  const d = await despachar(p, LUNES_MEDIODIA);
+
+  assert.equal(d.enviados, 1);
+  assert.equal(plantillas[0].nombre, 'estado_cuestionario_inicial');
+  assert.deepEqual(plantillas[0].params, ['Rodrigo', '5', '11'], 'nombre, respondidas y total');
+});
+
+test('con el cuestionario completo NO se manda: diría que le falta un paso que ya dio', async () => {
+  reset();
+  candidatos = [];
+  sinInscripcion = [sin()];
+  estadoAcad = { inscrito: false };
+  plantillaCuestionario = 'estado_cuestionario_inicial';
+  respondidasSim = 11;
+  await planificar(LUNES_MEDIODIA);
+  const rm = [...rms.values()][0];
+  rm.programadoPara = FUTURO();
+  await kvDel('ult_in:+56900050001');
+  const { p, plantillas } = fakeProvider();
+  const d = await despachar(p, LUNES_MEDIODIA);
+
+  assert.equal(d.omitidos, 1);
+  assert.equal(plantillas.length, 0);
+});
+
+test('la plantilla del cupo NO se usa para quien no tiene cupo', async () => {
+  // Es la confusión que costaría caro: el mensaje diría "tu cupo vence el X" a alguien sin cupo.
+  reset();
+  candidatos = [];
+  sinInscripcion = [sin()];
+  estadoAcad = { inscrito: false };
+  plantillaConfigurada = 'estado_inscripcion_curso';  // la del cupo, disponible
+  plantillaCuestionario = '';                          // la del cuestionario, no
+  await planificar(LUNES_MEDIODIA);
+  const rm = [...rms.values()][0];
+  rm.programadoPara = FUTURO();
+  await kvDel('ult_in:+56900050001');
+  const { p, plantillas } = fakeProvider();
+  const d = await despachar(p, LUNES_MEDIODIA);
+
+  assert.equal(d.omitidos, 1, 'prefiere no escribir antes que escribir algo falso');
+  assert.equal(plantillas.length, 0);
 });

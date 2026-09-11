@@ -9,7 +9,7 @@ import {
   reclamarParaEnvio, registrarWamid, devolverAProgramado, reprogramar, marcarEstado,
 } from '../store/recordatorios';
 import { estadoAcademico, avancePrevioArchivado, cursoActivo, expirarInscripciones } from '../store/cursos';
-import { estaCompleta, respondidas } from '../store/caracterizacion';
+import { estaCompleta, respondidas, totalPreguntas } from '../store/caracterizacion';
 import type { MessagingProvider } from '../messaging/types';
 
 // Motor de recordatorios (Fase 9). Dos etapas idempotentes que dispara Cloud Scheduler (F11) vía
@@ -208,14 +208,33 @@ export async function despachar(provider: MessagingProvider, now = new Date()): 
     // la persona escriba. Decirle "tu cupo vence el X" a quien no tiene cupo sería falso.
     const pendientes = (estado?.totalLecciones ?? 0) - (estado?.completadas ?? 0);
     const venceTxt = fechaCupo(estado?.enrollment?.venceEn);
-    const puedePlantilla = Boolean(
-      config.waTemplateRecordatorio && rm.tipo === 'continuar_curso' && pendientes > 0 && venceTxt,
-    );
-    if (!abierta && !puedePlantilla) {
+
+    // Cada segmento tiene SU plantilla, porque cada una afirma algo distinto y solo es cierta para
+    // quien corresponde. La del cupo habla de una inscripción vigente; la del cuestionario, de un
+    // proceso a medio terminar. Usar una en el segmento del otro sería mandar un dato falso.
+    let plantilla: { nombre: string; params: string[] } | null = null;
+    if (rm.tipo === 'continuar_curso' && config.waTemplateRecordatorio && pendientes > 0 && venceTxt) {
+      plantilla = {
+        nombre: config.waTemplateRecordatorio,
+        params: [rm.nombre ?? 'estudiante', String(pendientes), venceTxt],
+      };
+    } else if (rm.tipo === 'retomar' && config.waTemplateCuestionario) {
+      const [hechas, total] = await Promise.all([respondidas(rm.personId), totalPreguntas()]);
+      // Solo si de verdad quedó a medias: con el cuestionario completo el mensaje diría que le
+      // falta un paso que ya dio.
+      if (total > 0 && hechas < total) {
+        plantilla = {
+          nombre: config.waTemplateCuestionario,
+          params: [rm.nombre ?? 'estudiante', String(hechas), String(total)],
+        };
+      }
+    }
+
+    if (!abierta && !plantilla) {
       await marcarEstado(rm.id, 'omitido');
       resumen.omitidos++;
       log.warn('recordatorios: omitido — fuera de ventana 24h y sin plantilla aplicable', {
-        tipo: rm.tipo, hayPlantilla: Boolean(config.waTemplateRecordatorio), pendientes, vence: venceTxt,
+        tipo: rm.tipo, pendientes, vence: venceTxt,
       });
       continue;
     }
@@ -243,8 +262,7 @@ export async function despachar(provider: MessagingProvider, now = new Date()): 
     }
     const envio = abierta
       ? await provider.enviarTexto(rm.waId, cuerpo)
-      : await provider.enviarPlantilla(rm.waId, config.waTemplateRecordatorio, config.waTemplateLang,
-          [rm.nombre ?? 'estudiante', String(pendientes), venceTxt!]);
+      : await provider.enviarPlantilla(rm.waId, plantilla!.nombre, config.waTemplateLang, plantilla!.params);
 
     if (envio.ok) {
       await registrarWamid(rm.id, envio.messageId ?? null);
