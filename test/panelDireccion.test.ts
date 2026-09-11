@@ -20,7 +20,7 @@ process.env.NODE_ENV = 'test';
 let sqls: string[] = [];
 let embudo: any = {
   registradas: 100, con_cuestionario: 80, inscritas: 60, cursando: 25,
-  completaron: 20, certificadas: 18, total_micro: 8,
+  completaron: 20, certificadas: 18, certificadas_previas: 2, total_micro: 8,
 };
 let avance: any[] = [{ completadas: 0, personas: 30 }, { completadas: 8, personas: 20 }];
 let altas: any[] = [{ dia: '2026-09-10', n: 3 }, { dia: '2026-09-11', n: 0 }];
@@ -141,13 +141,31 @@ test('sin alertas ni cupos por vencer no se dibuja la franja', async () => {
   assert.doesNotMatch(html, /class="alertas"/);
 });
 
+test('el embudo no mezcla cohortes: los certificados se acotan al curso vigente', async () => {
+  // Sin acotar, el último peldaño puede superar al anterior —certificados de una versión archivada
+  // del curso contra inscripciones de la actual— y el embudo deja de leerse como un embudo.
+  const r = await traer();
+  assert.equal(r.certificadas, 18);
+  assert.equal(r.certificadasPrevias, 2, 'los anteriores se cuentan, pero aparte');
+  const q = sqlCon(/AS certificadas,/)!;
+  assert.match(q, /JOIN enrollment e ON e\.id = ct\.enrollment_id/, 'el certificado llega al curso por su inscripción');
+  assert.match(q, /c\.estado='activo'\) AS certificadas/);
+});
+
+test('los certificados de cohortes anteriores se nombran, no se borran', async () => {
+  const r = await traer();
+  assert.match(direccionHtml(r, 9.03), /2 certificados de versiones anteriores/);
+  assert.doesNotMatch(direccionHtml({ ...r, certificadasPrevias: 0 }, 9.03), /versiones anteriores/);
+  assert.match(direccionHtml({ ...r, certificadasPrevias: 1 }, 9.03), /1 certificado de versiones/, 'singular');
+});
+
 test('el resultado se deja en caché: el panel no rehace cinco agregados por visita', async () => {
   await traer();
   assert.ok(guardado['panel:direccion'], 'se guarda bajo una clave estable');
 });
 
 test('con el programa en cero no se rompe ni inventa porcentajes', async () => {
-  embudo = { registradas: 0, con_cuestionario: 0, inscritas: 0, cursando: 0, completaron: 0, certificadas: 0, total_micro: 8 };
+  embudo = { registradas: 0, con_cuestionario: 0, inscritas: 0, cursando: 0, completaron: 0, certificadas: 0, certificadas_previas: 0, total_micro: 8 };
   avance = [];
   altas = [];
   const r = await traer();

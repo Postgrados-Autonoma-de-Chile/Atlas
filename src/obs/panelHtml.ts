@@ -471,6 +471,9 @@ export function direccionHtml(r: ResumenDireccion, clpPorTurno: number): string 
     peldano('Se inscribieron al curso', r.inscritas, r.registradas, 'var(--p-navy)') +
     peldano('Terminaron el curso', r.completaron, r.registradas, 'var(--p-verde)') +
     peldano('Recibieron certificado', r.certificadas, r.registradas, 'var(--p-verde)') +
+    (r.certificadasPrevias > 0
+      ? `<p class="nota-dir" style="margin:.7rem 0 0">Hay además ${r.certificadasPrevias} certificado${r.certificadasPrevias === 1 ? '' : 's'} de versiones anteriores del curso, fuera de este embudo.</p>`
+      : '') +
     `</section>` +
 
     `<section class="caja-dir">` +

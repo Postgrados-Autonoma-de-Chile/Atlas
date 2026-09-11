@@ -295,6 +295,8 @@ export type ResumenDireccion = {
   cursando: number;
   completaron: number;
   certificadas: number;
+  /** Certificados de versiones anteriores del curso. Fuera del embudo, pero no borrados. */
+  certificadasPrevias: number;
   /** Personas por cantidad de microcápsulas completadas, de 0 al total del curso. */
   avance: { completadas: number; personas: number }[];
   totalMicrocapsulas: number;
@@ -329,7 +331,17 @@ export async function resumenDireccion(): Promise<ResumenDireccion | null> {
              WHERE c.estado='activo' AND e.estado='activa') AS cursando,
            (SELECT count(*)::int FROM enrollment e JOIN course c ON c.id=e.course_id
              WHERE c.estado='activo' AND e.estado='completada') AS completaron,
-           (SELECT count(*)::int FROM certificate WHERE folio IS NOT NULL) AS certificadas,
+           -- Acotado al curso vigente, como TODOS los peldaños: contar los certificados de
+           -- cohortes anteriores acá produciría un embudo donde el último peldaño supera al
+           -- anterior. Los previos se cuentan aparte para no hacerlos desaparecer.
+           (SELECT count(*)::int FROM certificate ct
+              JOIN enrollment e ON e.id = ct.enrollment_id
+              JOIN course c ON c.id = e.course_id
+             WHERE ct.folio IS NOT NULL AND c.estado='activo') AS certificadas,
+           (SELECT count(*)::int FROM certificate ct
+              JOIN enrollment e ON e.id = ct.enrollment_id
+              JOIN course c ON c.id = e.course_id
+             WHERE ct.folio IS NOT NULL AND c.estado<>'activo') AS certificadas_previas,
            (SELECT count(*)::int FROM lesson l JOIN module m ON m.id=l.module_id
              JOIN course c ON c.id=m.course_id WHERE c.estado='activo') AS total_micro`,
       ),
@@ -382,6 +394,7 @@ export async function resumenDireccion(): Promise<ResumenDireccion | null> {
       registradas: f.registradas, conCuestionario: f.con_cuestionario,
       inscritas: f.inscritas, cursando: f.cursando,
       completaron: f.completaron, certificadas: f.certificadas,
+      certificadasPrevias: f.certificadas_previas ?? 0,
       totalMicrocapsulas: total,
       avance: Array.from({ length: total + 1 }, (_, i) => ({ completadas: i, personas: porAvance.get(i) ?? 0 })),
       registrosPorDia: altas.rows.map((r: any) => ({ dia: r.dia, n: r.n })),
