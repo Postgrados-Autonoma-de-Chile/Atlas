@@ -6,7 +6,9 @@ import assert from 'node:assert/strict';
 process.env.REDIS_URL = '';
 process.env.DATABASE_URL = '';
 process.env.NODE_ENV = 'test';
-process.env.WA_TEMPLATE_RECORDATORIO = ''; // por defecto sin plantilla; se simula por caso
+// La plantilla NO se simula por variable de entorno: `config` es un singleton que se congela al
+// importarse, así que cambiar process.env después no tiene ningún efecto. Se mockea el módulo.
+let plantillaConfigurada = '';
 
 type Rm = { id: string; personId: string; tipo: string; estado: string; clave: string; programadoPara: Date; intentos: number; waMessageId?: string | null };
 const rms = new Map<string, Rm>();
@@ -30,6 +32,18 @@ let caracterizacionCompleta = true;
 let respondidasSim = 0;
 let avancePrevio: any = null;
 
+mock.module('../src/config.ts', {
+  namedExports: {
+    config: {
+      get waTemplateRecordatorio() { return plantillaConfigurada; },
+      waTemplateLang: 'es',
+      reminderDiasInactividad: 3,
+      reminderMaxSinActividad: 3,
+      reminderHorasPrimerAviso: 20,
+      inscripcionDiasVigencia: 30,
+    },
+  },
+});
 mock.module('../src/store/db.ts', {
   namedExports: { dbEnabled: () => true, dbInsertAudit: async () => {}, getPool: () => null },
 });
@@ -414,13 +428,13 @@ test('si la ventana ya se cerró, se DESCARTA en vez de gastar una plantilla', a
   const rm = [...rms.values()][0];
   rm.programadoPara = FUTURO();
   await kvDel('ult_in:+56900050001');           // ventana cerrada
-  process.env.WA_TEMPLATE_RECORDATORIO = 'x';   // aunque hubiera plantilla disponible
+  plantillaConfigurada = 'estado_inscripcion_curso'; // aunque HAYA plantilla disponible
   const { p, plantillas } = fakeProvider();
   const d = await despachar(p, LUNES_MEDIODIA);
   assert.equal(d.omitidos, 1);
   assert.equal(d.enviados, 0);
   assert.equal(plantillas.length, 0);
-  delete process.env.WA_TEMPLATE_RECORDATORIO;
+  plantillaConfigurada = '';
 });
 
 test('uno solo por episodio: el dedupe lo impide dos veces el mismo día', async () => {
@@ -431,4 +445,67 @@ test('uno solo por episodio: el dedupe lo impide dos veces el mismo día', async
   const r2 = await planificar(new Date(LUNES_MEDIODIA.getTime() + 3 * 3600 * 1000));
   assert.equal(r2.programados, 0, 'la clave de dedupe es por persona y día');
   assert.equal(rms.size, 1);
+});
+
+// ── La plantilla anclada ────────────────────────────────────────────────────
+//
+// Meta clasificó como MARKETING la primera plantilla, que decía "tienes microcápsulas pendientes,
+// responde para continuar": sin dato verificable y con CTA de reactivación. La segunda describe el
+// estado de una inscripción concreta —nombre, cuántas quedan, cuándo vence— que es lo que su
+// definición de utility admite. Ese cambio solo es honesto porque el plazo ahora existe de verdad.
+
+const CURSANDO = (venceEn: Date | null) => ({
+  inscrito: true,
+  curso: { id: 'c1', codigo: 'X', nombre: 'Nivel Inicial', duracionMin: 55 },
+  enrollment: { id: 'e1', estado: 'activa', minutosAcumulados: 12, venceEn },
+  totalLecciones: 8, completadas: 2,
+  proxima: { orden: 3, titulo: 'Cómo pedir información útil', tipo: 'capsula', duracionMin: 6 },
+});
+
+test('la plantilla lleva tres variables: nombre, pendientes y fecha del cupo', async () => {
+  reset();
+  estadoAcad = CURSANDO(new Date('2026-10-11T15:00:00Z'));
+  plantillaConfigurada = 'estado_inscripcion_curso';
+  await planificar(LUNES_MEDIODIA);
+  const rm = [...rms.values()][0];
+  rm.programadoPara = FUTURO();
+  await kvDel('ult_in:+56900050001');            // ventana cerrada → plantilla
+  const { p, plantillas } = fakeProvider();
+  const d = await despachar(p, LUNES_MEDIODIA);
+  plantillaConfigurada = '';
+
+  assert.equal(d.enviados, 1);
+  assert.equal(plantillas.length, 1);
+  assert.equal(plantillas[0].params.length, 3, 'tres, o Meta rechaza por desajuste de parámetros');
+  assert.equal(plantillas[0].params[1], '6', '8 microcápsulas menos las 2 hechas');
+  assert.match(plantillas[0].params[2], /octubre/, 'la fecha real del cupo');
+});
+
+test('sin fecha de cupo NO se manda la plantilla: diría algo que no se sabe', async () => {
+  reset();
+  estadoAcad = CURSANDO(null);
+  plantillaConfigurada = 'estado_inscripcion_curso';
+  await planificar(LUNES_MEDIODIA);
+  const rm = [...rms.values()][0];
+  rm.programadoPara = FUTURO();
+  await kvDel('ult_in:+56900050001');
+  const { p, plantillas } = fakeProvider();
+  const d = await despachar(p, LUNES_MEDIODIA);
+  plantillaConfigurada = '';
+
+  assert.equal(d.omitidos, 1);
+  assert.equal(plantillas.length, 0);
+});
+
+test('el mensaje gratuito también dice el plazo', async () => {
+  // Decir la fecha solo en la plantilla dejaría peor informado justo a quien sí está conversando.
+  reset();
+  estadoAcad = CURSANDO(new Date('2026-10-11T15:00:00Z'));
+  await planificar(LUNES_MEDIODIA);
+  const rm = [...rms.values()][0];
+  rm.programadoPara = FUTURO();
+  await setJson('ult_in:+56900050001', { t: Date.now() }, 3600);
+  const { p, textos } = fakeProvider();
+  await despachar(p, LUNES_MEDIODIA);
+  assert.match(textos[0], /vence el \*11 de octubre\*/);
 });

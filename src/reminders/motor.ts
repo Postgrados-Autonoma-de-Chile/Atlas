@@ -64,6 +64,12 @@ export function esOptInRecordatorios(texto: string): boolean {
   return /\b(quiero|activa(r|me)?|reactivar?|enviame|mandame)\s+(los\s+|mis\s+)?recordatorios\b/.test(t);
 }
 
+/** Fecha del cupo en el formato en que la lee una persona en Chile. */
+function fechaCupo(d: Date | null | undefined): string | null {
+  if (!d) return null;
+  return new Date(d).toLocaleDateString('es-CL', { day: 'numeric', month: 'long', timeZone: 'America/Santiago' });
+}
+
 const texto = {
   /** Primer aviso, el mismo día y dentro de la ventana gratuita. Breve a propósito: es un empujón,
    *  no una campaña, y llega cuando la persona todavía tiene fresco dónde quedó. */
@@ -94,8 +100,12 @@ const texto = {
 ` +
       `(Si prefieres no recibir recordatorios, dime "no enviar recordatorios".)`;
   },
-  continuar: (nombre: string | null, curso: string, proxima: string | null) =>
-    `¡Hola${nombre ? ` ${nombre}` : ''}! 👋 Te escribo de *ATLAS* (U. Autónoma). Quedó pendiente tu curso *${curso}*${proxima ? ` — la próxima microcápsula es *${proxima}* (5-7 min)` : ''}. ¿Retomamos? Escribe *continuar* cuando quieras 🙂\n\n(Si prefieres no recibir recordatorios, dime "no enviar recordatorios".)`,
+  continuar: (nombre: string | null, curso: string, proxima: string | null, vence?: string | null) =>
+    `¡Hola${nombre ? ` ${nombre}` : ''}! 👋 Te escribo de *ATLAS* (U. Autónoma). Quedó pendiente tu curso *${curso}*${proxima ? ` — la próxima microcápsula es *${proxima}* (5-7 min)` : ''}.` +
+    // El plazo también va en el mensaje gratuito: la urgencia es real, y decirla solo en la
+    // plantilla dejaría peor informado justo a quien sí está conversando.
+    `${vence ? ` Tu cupo vence el *${vence}*.` : ''} ¿Retomamos? Escribe *continuar* cuando quieras 🙂` +
+    `\n\n(Si prefieres no recibir recordatorios, dime "no enviar recordatorios".)`,
 };
 
 export type ResumenPlanificacion = { candidatos: number; programados: number; omitidosPorTope: number };
@@ -192,11 +202,21 @@ export async function despachar(provider: MessagingProvider, now = new Date()): 
       continue;
     }
 
-    if (!abierta && !config.waTemplateRecordatorio) {
-      // Sin plantilla aprobada y fuera de ventana: no se puede enviar (regla de Meta).
+    // La plantilla aprobada describe el estado de una inscripción vigente: nombre, microcápsulas
+    // pendientes y fecha de vencimiento. Solo es cierta para quien ESTÁ cursando, así que el
+    // segmento 'retomar' —que por definición no lo está— no tiene plantilla que usar y espera a que
+    // la persona escriba. Decirle "tu cupo vence el X" a quien no tiene cupo sería falso.
+    const pendientes = (estado?.totalLecciones ?? 0) - (estado?.completadas ?? 0);
+    const venceTxt = fechaCupo(estado?.enrollment?.venceEn);
+    const puedePlantilla = Boolean(
+      config.waTemplateRecordatorio && rm.tipo === 'continuar_curso' && pendientes > 0 && venceTxt,
+    );
+    if (!abierta && !puedePlantilla) {
       await marcarEstado(rm.id, 'omitido');
       resumen.omitidos++;
-      log.warn('recordatorios: omitido — fuera de ventana 24h y sin WA_TEMPLATE_RECORDATORIO');
+      log.warn('recordatorios: omitido — fuera de ventana 24h y sin plantilla aplicable', {
+        tipo: rm.tipo, hayPlantilla: Boolean(config.waTemplateRecordatorio), pendientes, vence: venceTxt,
+      });
       continue;
     }
 
@@ -216,11 +236,15 @@ export async function despachar(provider: MessagingProvider, now = new Date()): 
       ]);
       cuerpo = texto.retomar(rm.nombre, curso?.nombre ?? 'el curso', hechas > 0 && !completa, Boolean(previo));
     } else {
-      cuerpo = texto.continuar(rm.nombre, estado!.curso?.nombre ?? 'tu curso', estado!.proxima?.titulo ?? null);
+      cuerpo = texto.continuar(
+        rm.nombre, estado!.curso?.nombre ?? 'tu curso', estado!.proxima?.titulo ?? null,
+        fechaCupo(estado!.enrollment?.venceEn),
+      );
     }
     const envio = abierta
       ? await provider.enviarTexto(rm.waId, cuerpo)
-      : await provider.enviarPlantilla(rm.waId, config.waTemplateRecordatorio, config.waTemplateLang, [rm.nombre ?? 'estudiante']);
+      : await provider.enviarPlantilla(rm.waId, config.waTemplateRecordatorio, config.waTemplateLang,
+          [rm.nombre ?? 'estudiante', String(pendientes), venceTxt!]);
 
     if (envio.ok) {
       await registrarWamid(rm.id, envio.messageId ?? null);
