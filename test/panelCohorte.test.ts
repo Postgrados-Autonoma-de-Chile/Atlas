@@ -115,7 +115,7 @@ test('la contención por riesgo vital se marca en la fila y en un aviso arriba',
   assert.equal(r!.filas[0].alertasBienestar, 2);
   const html = panelCohorteHtml(r!);
   assert.match(html, /contención ×2/);
-  assert.match(html, /<b style="color:#b3261e">1<\/b><span>con contención/, 'una sola persona, no dos');
+  assert.match(html, /class="t t-alerta"><b>1<\/b><span>con contención/, 'una sola persona, no dos');
   assert.match(html, /4141/, 'el aviso recuerda qué se le entregó');
   assert.match(html, /NO se guarda/, 'lo que escribió no queda en ninguna parte');
   assert.match(html, /no tiene seguimiento humano/,
@@ -172,4 +172,27 @@ test('el modo fragmento no trae envoltorio de documento, y el completo sí', asy
   const completo = panelCohorteHtml(r);
   assert.match(completo, /<!doctype/i);
   assert.match(completo, /<style>/);
+});
+
+// ── El sistema de diseño Nocturne, aplicado sin abrir una fuga ──
+//
+// Nocturne enlaza Inter desde Google Fonts. El panel no puede: lleva nombres y teléfonos, y pedirle
+// un archivo a un tercero le avisa a ese tercero que alguien está mirando esta página. La prueba de
+// arriba ya lo exige para la página completa; estas dos cierran el resto de la puerta, porque al
+// adoptar el sistema el enlace se colaba y solo el test lo atajó.
+
+test('la página de acceso tampoco pide recursos remotos', async () => {
+  const html = panelAccesoHtml(60);
+  assert.doesNotMatch(html, /https?:\/\//, 'ni tipografías, ni CDN: nada sale a un tercero');
+});
+
+test('el estado de cada persona viaja como clase, no como color escrito a mano', async () => {
+  // Nocturne: ningún hexadecimal en el render donde ya hay un token con ese papel. Si vuelven los
+  // colores en línea, el tema oscuro se rompe en silencio —texto azul marino sobre fondo oscuro—
+  // y no hay nada que avise.
+  filas = [{ ...FILA, folio: 'A-1' }];
+  const html = panelCohorteHtml((await panelCohorte(90))!, true);
+  assert.match(html, /<td class="e-bien">certificada/);
+  assert.doesNotMatch(html, /<td style="color:/);
+  assert.doesNotMatch(html, /style="[^"]*#[0-9a-f]{3,6}/i, 'ningún color en un atributo style');
 });

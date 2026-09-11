@@ -173,3 +173,13 @@ test('con el programa en cero no se rompe ni inventa porcentajes', async () => {
   assert.doesNotMatch(html, /NaN|Infinity/);
   assert.match(html, /0 %/);
 });
+
+test('las barras pintan con style, no con el atributo fill', async () => {
+  // `fill` es un atributo de presentación y ahí `var()` no sustituye de forma confiable: la barra
+  // se dibujaría negra —invisible sobre el fondo oscuro de Nocturne— sin ningún error. En `style`
+  // sí sustituye. Se descubrió al aplicar el sistema, después de haber estado así en producción.
+  const r = await traer();
+  const html = direccionHtml(r, 9.03);
+  assert.match(html, /<rect [^>]*style="fill:var\(--/);
+  assert.doesNotMatch(html, /<rect [^>]*fill="var\(/, 'nunca var() en el atributo');
+});

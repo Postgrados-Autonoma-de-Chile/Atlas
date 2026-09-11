@@ -25,90 +25,227 @@ function hace(d: Date | null): { texto: string; dias: number | null } {
   return { texto: `hace ${dias} días`, dias };
 }
 
-function estadoDe(f: FilaPanel): { texto: string; color: string } {
-  if (f.folio) return { texto: `certificada · ${f.folio}`, color: '#0f7b3f' };
-  if (!f.curso) return { texto: 'registrada, sin inscripción', color: '#8a6d00' };
-  if (f.cursoArchivado) return { texto: `versión anterior · ${f.completadas}/${f.totalLecciones}`, color: '#8a6d00' };
-  if (!f.caracterizacionCompleta) return { texto: 'cuestionario pendiente', color: '#8a6d00' };
-  if (f.inscripcion === 'completada') return { texto: 'curso completo', color: '#0f7b3f' };
-  return { texto: `${f.completadas}/${f.totalLecciones} microcápsulas`, color: '#273473' };
+function estadoDe(f: FilaPanel): { texto: string; clase: string } {
+  if (f.folio) return { texto: `certificada · ${f.folio}`, clase: 'e-bien' };
+  if (!f.curso) return { texto: 'registrada, sin inscripción', clase: 'e-espera' };
+  if (f.cursoArchivado) return { texto: `versión anterior · ${f.completadas}/${f.totalLecciones}`, clase: 'e-espera' };
+  if (!f.caracterizacionCompleta) return { texto: 'cuestionario pendiente', clase: 'e-espera' };
+  if (f.inscripcion === 'completada') return { texto: 'curso completo', clase: 'e-bien' };
+  return { texto: `${f.completadas}/${f.totalLecciones} microcápsulas`, clase: 'e-curso' };
 }
 
-/** Estilos del panel. Compartidos con la página de acceso, para no mantenerlos dos veces. */
+/**
+ * Estilos del panel: el sistema de diseño **Nocturne** del proyecto, aplicado a una interfaz.
+ *
+ * Los tokens están COPIADOS acá, no enlazados, y eso es deliberado: este archivo se sirve desde
+ * Cloud Run y también se guarda en disco con `curl -o`, así que no puede depender de una hoja de
+ * estilos que vive en otra parte. La contrapartida es que si Nocturne se retoca, esta copia hay
+ * que actualizarla a mano — de ahí el identificador del sistema en la línea de abajo.
+ *
+ * Origen: _ds/nocturne-1eeab971-ec09-49be-a83b-729311bac525 (styles.css + readme.md).
+ * Lo que el sistema pide y acá se respeta: fondo oscuro de croma baja, Inter en peso 500 —la
+ * jerarquía es tamaño y espacio, nunca más negrita—, el acento como línea o borde y jamás como
+ * relleno de un área grande, botones con contorno, reglas que se desvanecen en los extremos,
+ * radios de 8px, la escala densa de 0.7× y foco de teclado con anillo de acento.
+ *
+ * Nocturne es un sistema oscuro por decisión, así que el panel no sigue el tema del sistema
+ * operativo: pinta su propio fondo siempre.
+ *
+ * DONDE EL SISTEMA SE DOBLA: Nocturne carga Inter desde Google Fonts. Acá no. Esta página lleva
+ * nombres y teléfonos de personas reales, y pedir un archivo a un tercero le avisaría a ese
+ * tercero que alguien la está mirando —con su IP y el Referer— justo en la página que el proyecto
+ * decidió que no tuviera un solo recurso remoto. Así que el token declara Inter con system-ui
+ * detrás y la identidad la cargan el color, la densidad, los radios y las reglas que se
+ * desvanecen, que es donde vive de todos modos. Hay una prueba que lo sostiene.
+ */
 export const PANEL_CSS = `
-      body{font-family:system-ui,-apple-system,sans-serif;margin:0;padding:1.5rem;background:#f6f7f9;color:#1a1a1a}
-      .caja{max-width:78rem;margin:0 auto;background:#fff;border-radius:12px;padding:1.5rem;box-shadow:0 1px 3px rgba(0,0,0,.12)}
-      h1{margin:0 0 .2rem;font-size:1.3rem}
-      .sub{margin:0 0 1.2rem;color:#667;font-size:.85rem}
-      .tarjetas{display:flex;gap:.75rem;flex-wrap:wrap;margin:0 0 1.2rem}
-      .t{background:#f6f7f9;border-radius:8px;padding:.6rem .9rem;min-width:7rem}
-      .t b{display:block;font-size:1.5rem;line-height:1.1;color:#273473}
-      .t span{font-size:.75rem;color:#667}
-      .scroll{overflow-x:auto}
-      table{border-collapse:collapse;width:100%;font-size:.86rem}
-      th,td{text-align:left;padding:.5rem .6rem;border-bottom:1px solid #ececf0;white-space:nowrap}
-      th{font-size:.72rem;text-transform:uppercase;letter-spacing:.03em;color:#667;border-bottom:2px solid #ddd}
-      tr:hover td{background:#fafbfc}
-      .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem}
-      .num{text-align:right;font-variant-numeric:tabular-nums}
-      .aviso{margin:1.2rem 0 0;padding:.7rem .9rem;background:#fff8e6;border-left:3px solid #d4a017;border-radius:4px;font-size:.8rem;color:#5a4a00}
-      .pie{margin:1rem 0 0;font-size:.75rem;color:#8a8a8a}
-      .preguntas{display:grid;gap:1.1rem;margin:1rem 0 0}
-      @media(min-width:60rem){.preguntas{grid-template-columns:1fr 1fr}}
-      .preg{border:1px solid #ececf0;border-radius:6px;padding:.85rem 1rem}
-      .preg h3{margin:0 0 .6rem;font-size:.85rem;font-weight:600;line-height:1.35;display:flex;gap:.5rem;align-items:baseline}
-      .preg-n{display:inline-flex;align-items:center;justify-content:center;min-width:1.25rem;height:1.25rem;border-radius:3px;background:#eceef5;color:#273473;font-size:.68rem;font-weight:700;flex:none}
-      .ops{display:grid;gap:.28rem}
-      .op{display:grid;grid-template-columns:minmax(6rem,1fr) 5rem 3rem 2.4rem;gap:.5rem;align-items:center;font-size:.78rem}
-      .op-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-      .op-barra{background:#eceef5;border-radius:2px;height:.5rem;overflow:hidden}
-      .op-barra i{display:block;height:100%;background:#273473;border-radius:2px}
-      .op-n,.op-pct{text-align:right;font-family:ui-monospace,monospace;font-size:.72rem;font-variant-numeric:tabular-nums}
-      .op-pct{color:#667}
-      .detalle-tit{margin:2rem 0 .6rem;font-size:1.05rem;font-weight:600}
-      table.detalle th{font-size:.62rem}
-      table.detalle td{font-size:.8rem}
-      .mas-wrap{margin:.9rem 0 0}
-      .mas{padding:.5rem 1rem;border:1px solid #273473;border-radius:6px;background:transparent;color:#273473;font-size:.85rem;font-weight:600;cursor:pointer;font-family:inherit}
-      .mas:hover{background:#eceef5}
-      .mas[disabled]{opacity:.5;cursor:default}
-      .fin{margin:.9rem 0 0;font-size:.78rem;color:#8a8a8a}
-      .alerta{display:inline-block;margin-left:.35rem;padding:.05rem .35rem;border-radius:4px;background:#fdecea;color:#b3261e;font-size:.7rem;font-weight:600;vertical-align:middle}
+      :root{
+        /* — Nocturne: roles y rampas tonales (generadas en OKLCH sobre una misma escala de
+           luminosidad, así que el mismo paso de cualquier rampa pesa lo mismo) — */
+        --color-bg:#161826;
+        --color-surface:#232532;
+        --color-text:#e9e9ed;
+        --color-accent:#9184d9;
+        --color-divider:color-mix(in srgb,#e9e9ed 16%,transparent);
+        --color-neutral-100:#f3f5fe; --color-neutral-200:#e4e7f5; --color-neutral-300:#cfd3e5;
+        --color-neutral-400:#b2b6ca; --color-neutral-500:#9397ab; --color-neutral-600:#75798c;
+        --color-neutral-700:#595d6c; --color-neutral-800:#3f424d; --color-neutral-900:#292b31;
+        --color-accent-100:#f5f4ff; --color-accent-200:#e7e5fe; --color-accent-300:#d2cefd;
+        --color-accent-400:#b5abfc; --color-accent-500:#968ae0; --color-accent-600:#796cbf;
+        --color-accent-700:#5d5294; --color-accent-800:#423a6a; --color-accent-900:#2b2741;
+        --font-heading:"Inter",system-ui,-apple-system,sans-serif;
+        --font-body:"Inter",system-ui,-apple-system,sans-serif;
+        --font-heading-weight:500;
+        --space-1:2.8px; --space-2:5.6px; --space-3:8.4px; --space-4:11.2px;
+        --space-6:16.8px; --space-8:22.4px;
+        --radius-sm:4px; --radius-md:8px; --radius-lg:14px;
+        --shadow-sm:0 0 0 1px #3f424d;
+        --shadow-md:0 0 0 1px #595d6c,0 6px 18px rgba(0,0,0,.55);
+        /* Color semántico. Nocturne es monocromo —un solo acento— y no define estos roles; un
+           panel sí los necesita, porque "hay que atender esto" no puede leerse igual que el
+           resto. Siguen su método: relleno del paso oscuro, texto del paso claro, croma baja. */
+        --p-critico:#c4566e; --p-critico-fill:#3a2430; --p-critico-texto:#f2ccd5;
+        --p-aviso:#bf9a52; --p-aviso-fill:#332c20; --p-aviso-texto:#f0e2c6;
+        --p-bien:#5fa98d; --p-bien-fill:#1e3430; --p-bien-texto:#c9e8dc;
+        /* La regla que se desvanece en los extremos: firma del sistema, 48px por lado. */
+        --p-regla:linear-gradient(to right,transparent,var(--color-divider) 48px,
+                  var(--color-divider) calc(100% - 48px),transparent);
+      }
+      *,*::before,*::after{box-sizing:border-box}
+      body{font-family:var(--font-body);margin:0;padding:var(--space-8) var(--space-6);
+        background:var(--color-bg);color:var(--color-text);font-size:15px;line-height:1.55}
+      .caja{max-width:78rem;margin:0 auto;background:var(--color-surface);
+        border-radius:var(--radius-lg);padding:var(--space-8);box-shadow:var(--shadow-sm)}
+      h1,h2,h3{font-family:var(--font-heading);font-weight:var(--font-heading-weight);
+        line-height:1.12;letter-spacing:-.015em}
+      h1{margin:0 0 var(--space-1);font-size:25px}
+      .sub{margin:0 0 var(--space-8);font-size:12px;letter-spacing:.02em;
+        color:var(--color-neutral-500)}
+      :focus{outline:none}
+      :focus-visible{outline:2px solid var(--color-accent);outline-offset:2px}
+      ::selection{background:color-mix(in srgb,var(--color-accent) 30%,transparent)}
 
-      /* Vista de dirección. Otra lectura: no "a quién le escribo" sino "el programa funciona".
-         Las cifras van en serif del sistema —no hay recursos remotos, este archivo abre sin red—
-         para que la escala se lea antes que el texto que la rodea. */
-      .dir{--serif:'Iowan Old Style','Palatino Linotype',Palatino,Georgia,serif}
-      .dir h1{font-size:1.55rem;letter-spacing:-.015em;font-weight:600}
-      .dir h2{margin:0 0 .7rem;font-size:.72rem;text-transform:uppercase;letter-spacing:.07em;color:#667;font-weight:700}
-      .nota-dir{margin:-.35rem 0 .8rem;font-size:.75rem;color:#8a8a8a;line-height:1.4}
-      .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(8.5rem,1fr));gap:.6rem;margin:0 0 1rem}
-      .kpi{padding:.85rem .95rem .8rem;background:#f6f7f9;border-radius:10px;border-top:3px solid #273473}
-      .kpi.kpi-ok{border-top-color:#1d7a5f}
-      .kpi b{display:block;font-family:var(--serif);font-size:2.1rem;line-height:1;color:#273473;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
-      .kpi.kpi-ok b{color:#1d7a5f}
-      .kpi span{display:block;margin-top:.3rem;font-size:.74rem;color:#667;line-height:1.3}
-      .alertas{display:grid;gap:.45rem;margin:0 0 1.1rem}
-      .al{display:flex;align-items:baseline;gap:.6rem;padding:.55rem .8rem;border-radius:8px;font-size:.8rem;line-height:1.35}
-      .al b{font-family:var(--serif);font-size:1.15rem;font-variant-numeric:tabular-nums;flex:none}
-      .al-roja{background:#fdecea;color:#8c1d18;border-left:3px solid #b3261e}
-      .al-ambar{background:#fff8e6;color:#5a4a00;border-left:3px solid #d4a017}
-      .dos{display:grid;gap:.9rem;margin:0 0 .9rem}
+      /* Tarjetas de cifras. El acento entra como línea o borde, nunca como relleno. */
+      .tarjetas{display:flex;gap:var(--space-3);flex-wrap:wrap;margin:0 0 var(--space-8)}
+      .t{background:var(--color-bg);border-radius:var(--radius-md);
+        padding:var(--space-4) var(--space-6);min-width:7rem;box-shadow:var(--shadow-sm)}
+      .t b{display:block;font-family:var(--font-heading);font-weight:var(--font-heading-weight);
+        font-size:26px;line-height:1.1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+      .t span{display:block;margin-top:var(--space-1);font-size:10.5px;letter-spacing:.08em;
+        text-transform:uppercase;color:var(--color-neutral-500)}
+      .t-alerta{box-shadow:inset 0 0 0 1px var(--p-critico)}
+      .t-alerta b{color:var(--p-critico-texto)}
+
+      /* Tablas: la regla la pinta la FILA, no la celda, para que el desvanecido cruce la fila
+         completa en vez de cortarse en cada columna. */
+      .scroll{overflow-x:auto}
+      table{border-collapse:collapse;width:100%;font-size:14px}
+      th,td{text-align:left;padding:var(--space-2) var(--space-3);white-space:nowrap;
+        border-bottom:1px solid transparent}
+      th{font-size:11px;text-transform:uppercase;letter-spacing:.08em;
+        color:color-mix(in srgb,var(--color-text) 60%,transparent)}
+      thead tr{background:var(--p-regla) no-repeat bottom/100% 1px}
+      tbody tr{background:linear-gradient(to right,transparent,
+        color-mix(in srgb,var(--color-text) 8%,transparent) 48px,
+        color-mix(in srgb,var(--color-text) 8%,transparent) calc(100% - 48px),transparent)
+        no-repeat bottom/100% 1px}
+      tbody tr:hover{background:
+        linear-gradient(color-mix(in srgb,var(--color-text) 4%,transparent),
+                        color-mix(in srgb,var(--color-text) 4%,transparent))
+          no-repeat 0 0/100% 100%,
+        linear-gradient(to right,transparent,
+          color-mix(in srgb,var(--color-text) 8%,transparent) 48px,
+          color-mix(in srgb,var(--color-text) 8%,transparent) calc(100% - 48px),transparent)
+          no-repeat bottom/100% 1px}
+      .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
+      .num{text-align:right;font-variant-numeric:tabular-nums}
+      /* Estados de la cohorte como roles, no como hexadecimales sueltos en el render. */
+      .e-bien{color:var(--p-bien)}
+      .e-espera{color:var(--p-aviso)}
+      .e-curso{color:var(--color-accent-300)}
+      .tenue{color:var(--color-neutral-600)}
+
+      .aviso{margin:var(--space-8) 0 0;padding:var(--space-4) var(--space-6);
+        background:var(--color-bg);border-left:2px solid var(--color-accent);
+        border-radius:var(--radius-sm);font-size:13px;color:var(--color-neutral-300)}
+      .aviso strong{color:var(--color-text);font-weight:500}
+      .aviso-roja{border-left-color:var(--p-critico);background:var(--p-critico-fill);
+        color:var(--p-critico-texto)}
+      .aviso-roja strong{color:var(--color-neutral-100)}
+      .pie{margin:var(--space-6) 0 0;font-size:11.5px;color:var(--color-neutral-600)}
+
+      /* Caracterización: la barra de cada opción es una línea de acento, no un bloque. */
+      .preguntas{display:grid;gap:var(--space-8);margin:var(--space-6) 0 0}
+      @media(min-width:60rem){.preguntas{grid-template-columns:1fr 1fr}}
+      .preg{border-radius:var(--radius-md);padding:var(--space-6);background:var(--color-bg);
+        box-shadow:var(--shadow-sm)}
+      .preg h3{margin:0 0 var(--space-4);font-size:13.5px;line-height:1.35;display:flex;
+        gap:var(--space-3);align-items:baseline}
+      .preg-n{display:inline-flex;align-items:center;justify-content:center;min-width:18px;
+        height:18px;border-radius:var(--radius-sm);background:var(--color-accent-900);
+        color:var(--color-accent-300);font-size:10px;font-family:var(--font-heading);flex:none}
+      .ops{display:grid;gap:var(--space-1)}
+      .op{display:grid;grid-template-columns:minmax(6rem,1fr) 5rem 3rem 2.4rem;gap:var(--space-3);
+        align-items:center;font-size:12.5px}
+      .op-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+        color:var(--color-neutral-300)}
+      .op-barra{background:var(--color-neutral-900);border-radius:2px;height:6px;overflow:hidden}
+      .op-barra i{display:block;height:100%;background:var(--color-accent-500);border-radius:2px}
+      .op-n,.op-pct{text-align:right;font-family:ui-monospace,monospace;font-size:11px;
+        font-variant-numeric:tabular-nums}
+      .op-pct{color:var(--color-neutral-500)}
+      .detalle-tit{margin:var(--space-8) 0 var(--space-4);font-family:var(--font-heading);
+        font-weight:var(--font-heading-weight);font-size:20px;letter-spacing:-.015em}
+      table.detalle th{font-size:10px}
+      table.detalle td{font-size:12.5px}
+
+      /* Botón: contorno de acento. El sistema no rellena acciones. */
+      .mas-wrap{margin:var(--space-6) 0 0}
+      .mas{display:inline-flex;align-items:center;gap:6px;cursor:pointer;
+        font-family:var(--font-heading);font-weight:var(--font-heading-weight);font-size:14px;
+        line-height:1.2;color:var(--color-accent);background:transparent;
+        border:1px solid var(--color-accent);padding:var(--space-2) calc(var(--space-3)*1.2);
+        border-radius:var(--radius-md)}
+      .mas:hover{background:color-mix(in srgb,var(--color-accent) 12%,transparent)}
+      .mas:active{background:color-mix(in srgb,var(--color-accent) 22%,transparent)}
+      .mas[disabled]{opacity:.45;cursor:not-allowed}
+      .fin{margin:var(--space-6) 0 0;font-size:12px;color:var(--color-neutral-600)}
+      .alerta{display:inline-flex;align-items:center;margin-left:var(--space-2);padding:3px 10px;
+        border-radius:calc(var(--radius-md)*.75);background:var(--p-critico-fill);
+        color:var(--p-critico-texto);font-size:11px;letter-spacing:.02em;vertical-align:middle}
+
+      /* ── Vista de dirección ──
+         Otra lectura: no "a quién le escribo" sino "el programa funciona". Las cifras crecen por
+         tamaño y espacio, que es como Nocturne construye jerarquía: nunca por más negrita. */
+      .dir h1{font-size:32px;margin:0 0 var(--space-2)}
+      .dir h2{margin:0 0 var(--space-4);font-size:11px;text-transform:uppercase;
+        letter-spacing:.1em;color:var(--color-accent);font-weight:var(--font-heading-weight)}
+      .nota-dir{margin:calc(var(--space-3)*-1) 0 var(--space-6);font-size:12px;
+        color:var(--color-neutral-500);line-height:1.5}
+      .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(9rem,1fr));
+        gap:var(--space-3);margin:0 0 var(--space-8)}
+      .kpi{padding:var(--space-6);border-radius:var(--radius-md);background:var(--color-bg);
+        display:flex;flex-direction:column;gap:var(--space-1);
+        box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--color-accent) 45%,transparent)}
+      .kpi-ok{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--p-bien) 45%,transparent)}
+      .kpi b{font-family:var(--font-heading);font-weight:var(--font-heading-weight);font-size:34px;
+        line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+      .kpi-ok b{color:var(--p-bien-texto)}
+      .kpi span{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+        color:var(--color-neutral-500);line-height:1.4}
+      .alertas{display:grid;gap:var(--space-2);margin:0 0 var(--space-8)}
+      .al{display:flex;align-items:baseline;gap:var(--space-4);
+        padding:var(--space-4) var(--space-6);border-radius:var(--radius-md);font-size:13px;
+        line-height:1.5}
+      .al b{font-family:var(--font-heading);font-weight:var(--font-heading-weight);font-size:20px;
+        font-variant-numeric:tabular-nums;flex:none;line-height:1.2}
+      .al-roja{background:var(--p-critico-fill);color:var(--p-critico-texto);
+        box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--p-critico) 55%,transparent)}
+      .al-ambar{background:var(--p-aviso-fill);color:var(--p-aviso-texto);
+        box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--p-aviso) 55%,transparent)}
+      .dos{display:grid;gap:var(--space-3);margin:0 0 var(--space-3)}
       @media(min-width:62rem){.dos{grid-template-columns:1fr 1fr;align-items:start}}
-      .caja-dir{border:1px solid #e7e9ef;border-radius:10px;padding:1rem 1.1rem}
+      .caja-dir{border-radius:var(--radius-md);padding:var(--space-6);background:var(--color-bg);
+        box-shadow:var(--shadow-sm)}
       .caja-dir svg{width:100%;height:auto;display:block}
-      .g-val{font-size:8px;fill:#667;font-variant-numeric:tabular-nums}
-      .g-eje{font-size:7.5px;fill:#9a9aa5;font-variant-numeric:tabular-nums}
-      .pel{margin:0 0 .7rem}
+      .g-val{font-size:8px;fill:var(--color-neutral-400);font-variant-numeric:tabular-nums}
+      .g-eje{font-size:7.5px;fill:var(--color-neutral-600);font-variant-numeric:tabular-nums}
+      .pel{margin:0 0 var(--space-4)}
       .pel:last-child{margin-bottom:0}
-      .pel-cab{display:flex;justify-content:space-between;align-items:baseline;gap:.5rem;font-size:.82rem}
-      .pel-cab b{font-family:var(--serif);font-size:1.05rem;font-variant-numeric:tabular-nums}
-      .pel-barra{height:.55rem;background:#eceef5;border-radius:3px;overflow:hidden;margin:.2rem 0 .15rem}
-      .pel-barra i{display:block;height:100%;border-radius:3px}
-      .pel-pct{font-size:.7rem;color:#9a9aa5;font-variant-numeric:tabular-nums}
-      .costos{display:flex;gap:1.6rem;flex-wrap:wrap;margin:0 0 .7rem}
-      .costos b{display:block;font-family:var(--serif);font-size:1.6rem;line-height:1.1;color:#273473;font-variant-numeric:tabular-nums}
-      .costos span{font-size:.74rem;color:#667}
+      .pel-cab{display:flex;justify-content:space-between;align-items:baseline;
+        gap:var(--space-3);font-size:13px;color:var(--color-neutral-300)}
+      .pel-cab b{font-family:var(--font-heading);font-weight:var(--font-heading-weight);
+        font-size:17px;color:var(--color-text);font-variant-numeric:tabular-nums}
+      .pel-barra{height:6px;background:var(--color-neutral-900);border-radius:2px;
+        overflow:hidden;margin:var(--space-1) 0}
+      .pel-barra i{display:block;height:100%;border-radius:2px}
+      .pel-pct{font-size:11px;color:var(--color-neutral-600);font-variant-numeric:tabular-nums}
+      .costos{display:flex;gap:var(--space-8);flex-wrap:wrap;margin:0 0 var(--space-4)}
+      .costos b{display:block;font-family:var(--font-heading);
+        font-weight:var(--font-heading-weight);font-size:26px;line-height:1.1;
+        letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+      .costos span{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+        color:var(--color-neutral-500)}
     `;
 
 /**
@@ -126,15 +263,15 @@ export function panelCohorteHtml(r: ResumenPanel, fragmento = false): string {
     .map((f) => {
       const e = estadoDe(f);
       const h = hace(f.ultimoEn);
-      const gris = (h.dias ?? 999) > 14 ? 'color:#8a8a8a' : '';
+      const apagada = (h.dias ?? 999) > 14 ? ' class="tenue"' : '';
       return (
-        `<tr style="${gris}">` +
+        `<tr${apagada}>` +
         `<td><strong>${escapar(f.nombre)}</strong>` +
         (f.alertasBienestar > 0
           ? ` <span class="alerta" title="Se activó la contención por señal de riesgo vital ${f.alertasBienestar} ${f.alertasBienestar === 1 ? 'vez' : 'veces'}">contención ×${f.alertasBienestar}</span>`
           : '') + `</td>` +
         `<td class="mono">${escapar(f.waId)}</td>` +
-        `<td style="color:${e.color}">${escapar(e.texto)}</td>` +
+        `<td class="${e.clase}">${escapar(e.texto)}</td>` +
         `<td class="num">${f.turnos}</td>` +
         `<td class="num">${f.eventos}</td>` +
         `<td class="mono">${escapar(fecha(f.registradoEn))}</td>` +
@@ -154,7 +291,7 @@ export function panelCohorteHtml(r: ResumenPanel, fragmento = false): string {
     `<div class="t"><b>${conAvance}</b><span>con avance</span></div>` +
     `<div class="t"><b>${r.filas.filter((f) => f.folio).length}</b><span>certificadas</span></div>` +
     (alertadas
-      ? `<div class="t" style="background:#fdecea"><b style="color:#b3261e">${alertadas}</b><span>con contención</span></div>`
+      ? `<div class="t t-alerta"><b>${alertadas}</b><span>con contención</span></div>`
       : '') +
     `</div>` +
     `<div class="scroll"><table>` +
@@ -167,7 +304,7 @@ export function panelCohorteHtml(r: ResumenPanel, fragmento = false): string {
     `generar varios. Ambos se cuentan sobre la auditoría, que conserva ${r.retencionDias} días: un ` +
     `número bajo en alguien antiguo puede ser historial ya purgado, no inactividad.</p>` +
     (alertadas
-      ? `<p class="aviso" style="background:#fdecea;border-left-color:#b3261e;color:#7a1a12">` +
+      ? `<p class="aviso aviso-roja">` +
         `<strong>${alertadas} ${alertadas === 1 ? 'persona' : 'personas'}</strong> escribió algo que activó la ` +
         `contención por señal de riesgo vital. ATLAS detuvo el curso y entregó las líneas de ayuda ` +
         `(*4141*, 600 360 7777, 131); lo que escribió NO se guarda en ninguna parte, solo el hecho.` +
@@ -207,15 +344,31 @@ export function panelAccesoHtml(refrescoSeg = 60): string {
     `<meta name="robots" content="noindex,nofollow">` +
     `<title>Panel ATLAS</title>` +
     `<style>${PANEL_CSS}
-      .acceso{max-width:24rem;margin:4rem auto;background:#fff;border-radius:12px;padding:1.5rem;box-shadow:0 1px 3px rgba(0,0,0,.12)}
-      .acceso input{width:100%;box-sizing:border-box;padding:.6rem;font-family:ui-monospace,monospace;font-size:.9rem;border:1px solid #ccd;border-radius:6px;margin:.6rem 0}
-      .acceso button,.barra button{padding:.5rem .9rem;border:0;border-radius:6px;background:#273473;color:#fff;font-size:.85rem;cursor:pointer}
-      .barra{max-width:78rem;margin:0 auto .8rem;display:flex;align-items:center;gap:.75rem;font-size:.8rem;color:#667}
-      .barra button{background:#eceef5;color:#273473}
-      .err{color:#b3261e;font-size:.85rem;margin:.4rem 0 0}
-      .barra .tab{background:transparent;color:#667;border:1px solid transparent;font-weight:600}
-      .barra .tab.activa{background:#273473;color:#fff}
-      #estado{margin-left:auto}
+      .acceso{max-width:24rem;margin:4rem auto;background:var(--color-surface);
+        border-radius:var(--radius-lg);padding:var(--space-8);box-shadow:var(--shadow-md)}
+      .acceso input{width:100%;min-height:36px;padding:6px 10px;font-family:ui-monospace,monospace;
+        font-size:14px;margin:var(--space-4) 0;color:var(--color-text);
+        caret-color:var(--color-accent);background:var(--color-bg);
+        border:1px solid var(--color-divider);border-radius:var(--radius-md)}
+      .acceso input:hover{border-color:color-mix(in srgb,var(--color-text) 45%,transparent)}
+      .acceso input:focus-visible{border-color:var(--color-accent);outline-offset:0}
+      .acceso button,.barra button{cursor:pointer;font-family:var(--font-heading);
+        font-weight:var(--font-heading-weight);font-size:14px;line-height:1.2;
+        padding:var(--space-2) calc(var(--space-3)*1.2);border-radius:var(--radius-md);
+        background:transparent;color:var(--color-accent);border:1px solid var(--color-accent)}
+      .acceso button:hover,.barra button:hover{
+        background:color-mix(in srgb,var(--color-accent) 12%,transparent)}
+      .barra{max-width:78rem;margin:0 auto var(--space-4);display:flex;align-items:center;
+        gap:var(--space-3);flex-wrap:wrap;font-size:12px;color:var(--color-neutral-500)}
+      .barra button{color:var(--color-neutral-300);border-color:var(--color-divider)}
+      .barra button:hover{background:color-mix(in srgb,var(--color-text) 7%,transparent)}
+      .err{color:var(--p-critico);font-size:13px;margin:var(--space-2) 0 0}
+      /* La pestaña activa se marca con el acento en el texto y una línea bajo el rótulo. Un
+         relleno de acento sería justo lo que el sistema no hace. */
+      .barra .tab{border-color:transparent;color:var(--color-neutral-500)}
+      .barra .tab.activa{color:var(--color-accent);
+        box-shadow:inset 0 -2px 0 0 var(--color-accent);border-radius:var(--radius-sm)}
+      #estado{margin-left:auto;font-variant-numeric:tabular-nums}
     </style>` +
     `<body>` +
     `<div id="acceso" class="acceso" hidden>` +
@@ -403,7 +556,7 @@ function barras(datos: { etiqueta: string; n: number }[], ancho: number, alto: n
       const x = i * (w + gap);
       const y = base - h;
       return (
-        `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${color}"></rect>` +
+        `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="2" style="fill:${color}"></rect>` +
         (d.n > 0 ? `<text class="g-val" x="${(x + w / 2).toFixed(1)}" y="${(y - 4).toFixed(1)}" text-anchor="middle">${d.n}</text>` : '') +
         `<text class="g-eje" x="${(x + w / 2).toFixed(1)}" y="${(base + 13).toFixed(1)}" text-anchor="middle">${escapar(d.etiqueta)}</text>`
       );
@@ -466,11 +619,11 @@ export function direccionHtml(r: ResumenDireccion, clpPorTurno: number): string 
     `<div class="dos">` +
     `<section class="caja-dir">` +
     `<h2>Del registro al certificado</h2>` +
-    peldano('Se registraron', r.registradas, r.registradas, 'var(--p-navy)') +
-    peldano('Completaron el cuestionario', r.conCuestionario, r.registradas, 'var(--p-navy)') +
-    peldano('Se inscribieron al curso', r.inscritas, r.registradas, 'var(--p-navy)') +
-    peldano('Terminaron el curso', r.completaron, r.registradas, 'var(--p-verde)') +
-    peldano('Recibieron certificado', r.certificadas, r.registradas, 'var(--p-verde)') +
+    peldano('Se registraron', r.registradas, r.registradas, 'var(--color-accent-500)') +
+    peldano('Completaron el cuestionario', r.conCuestionario, r.registradas, 'var(--color-accent-500)') +
+    peldano('Se inscribieron al curso', r.inscritas, r.registradas, 'var(--color-accent-500)') +
+    peldano('Terminaron el curso', r.completaron, r.registradas, 'var(--p-bien)') +
+    peldano('Recibieron certificado', r.certificadas, r.registradas, 'var(--p-bien)') +
     (r.certificadasPrevias > 0
       ? `<p class="nota-dir" style="margin:.7rem 0 0">Hay además ${r.certificadasPrevias} certificado${r.certificadasPrevias === 1 ? '' : 's'} de versiones anteriores del curso, fuera de este embudo.</p>`
       : '') +
@@ -480,7 +633,7 @@ export function direccionHtml(r: ResumenDireccion, clpPorTurno: number): string 
     `<h2>Dónde está cada estudiante</h2>` +
     `<p class="nota-dir">Personas por microcápsulas completadas, de 0 a ${r.totalMicrocapsulas}.</p>` +
     `<svg viewBox="0 0 340 150" role="img" aria-label="Distribución de estudiantes por microcápsulas completadas">` +
-    `<g transform="translate(4,8)">${barras(avance, 332, 142, 'var(--p-navy)')}</g></svg>` +
+    `<g transform="translate(4,8)">${barras(avance, 332, 142, 'var(--color-accent-500)')}</g></svg>` +
     `</section>` +
     `</div>` +
 
@@ -489,7 +642,7 @@ export function direccionHtml(r: ResumenDireccion, clpPorTurno: number): string 
     `<h2>Altas por día</h2>` +
     `<p class="nota-dir">Últimos 14 días.</p>` +
     `<svg viewBox="0 0 340 150" role="img" aria-label="Personas registradas por día en los últimos 14 días">` +
-    `<g transform="translate(4,8)">${barras(dias, 332, 142, 'var(--p-verde)')}</g></svg>` +
+    `<g transform="translate(4,8)">${barras(dias, 332, 142, 'var(--p-bien)')}</g></svg>` +
     `</section>` +
 
     `<section class="caja-dir">` +
