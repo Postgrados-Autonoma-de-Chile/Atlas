@@ -4,7 +4,8 @@ import { audit } from '../obs/audit';
 import { getJson } from '../store/kv';
 import { wallClock, zonedToUtc, esDiaHabil, dentroDeVentana, type CampaignAgenda } from '../campaign/calendar';
 import {
-  candidatosContinuarCurso, candidatosSinInscripcion, programarRecordatorio, pendientesDeDespacho,
+  candidatosContinuarCurso, candidatosSinInscripcion, candidatosPrimerAviso,
+  programarRecordatorio, pendientesDeDespacho,
   reclamarParaEnvio, registrarWamid, devolverAProgramado, reprogramar, marcarEstado,
 } from '../store/recordatorios';
 import { estadoAcademico, avancePrevioArchivado, cursoActivo } from '../store/cursos';
@@ -64,6 +65,11 @@ export function esOptInRecordatorios(texto: string): boolean {
 }
 
 const texto = {
+  /** Primer aviso, el mismo día y dentro de la ventana gratuita. Breve a propósito: es un empujón,
+   *  no una campaña, y llega cuando la persona todavía tiene fresco dónde quedó. */
+  primerAviso: (nombre: string | null, proxima: string | null) =>
+    `¿Seguimos${nombre ? `, ${nombre}` : ''}? 🙂${proxima ? ` Te quedaba *${proxima}* (5-7 min).` : ''} ` +
+    `Escribe *continuar* y la vemos ahora.`,
   /** Quien se registró y no está cursando. El mensaje dice DÓNDE quedó, que es lo que hace que
    *  alguien retome: "sigue tu curso" es ruido; "te faltan 6 preguntas" es una acción. */
   retomar: (nombre: string | null, curso: string, parcial: boolean, previo: boolean) => {
@@ -96,9 +102,18 @@ export type ResumenPlanificacion = { candidatos: number; programados: number; om
 
 /** Etapa 1: programa recordatorios de continuidad para inactivos con opt-in. Idempotente. */
 export async function planificar(now = new Date()): Promise<ResumenPlanificacion> {
-  const candidatos = await candidatosContinuarCurso(config.reminderDiasInactividad);
   let programados = 0;
   let omitidosPorTope = 0;
+
+  // PRIMERO el aviso gratuito: se planifica antes que el de 7 días para que, cuando ambos
+  // apliquen, la persona reciba el que no cuesta.
+  const primeros = await candidatosPrimerAviso(config.reminderHorasPrimerAviso);
+  for (const c of primeros) {
+    const clave = `${c.personId}:primer_aviso:${Math.floor(now.getTime() / (24 * 3600 * 1000))}`;
+    if (await programarRecordatorio(c.personId, 'primer_aviso', clave, proximaVentanaHabil(now))) programados++;
+  }
+
+  const candidatos = await candidatosContinuarCurso(config.reminderDiasInactividad);
   for (const c of candidatos) {
     if (c.enviadosSinActividad >= config.reminderMaxSinActividad) { omitidosPorTope++; continue; }
     const clave = claveDedupe(c.personId, 'continuar_curso', now, config.reminderDiasInactividad);
@@ -114,10 +129,11 @@ export async function planificar(now = new Date()): Promise<ResumenPlanificacion
     if (await programarRecordatorio(c.personId, 'retomar', clave, proximaVentanaHabil(now))) programados++;
   }
 
-  const total = candidatos.length + sinInscripcion.length;
+  const total = primeros.length + candidatos.length + sinInscripcion.length;
   if (total) {
     log.info('recordatorios: planificación', {
-      cursando: candidatos.length, sinInscripcion: sinInscripcion.length, programados, omitidosPorTope,
+      primerAviso: primeros.length, cursando: candidatos.length,
+      sinInscripcion: sinInscripcion.length, programados, omitidosPorTope,
     });
   }
   return { candidatos: total, programados, omitidosPorTope };
@@ -160,6 +176,17 @@ export async function despachar(provider: MessagingProvider, now = new Date()): 
 
     // Canal: texto libre si la ventana de servicio de 24h sigue abierta; plantilla utility si no.
     const abierta = Boolean(ultIn && Date.now() - ultIn.t < 24 * 3600 * 1000);
+
+    // El primer aviso existe PORQUE es gratis. Si la ventana ya se cerró, no se convierte en
+    // plantilla: eso lo transformaría en un gasto de CLP 78,49 —Meta clasificó nuestra plantilla de
+    // recordatorio como marketing— para hacer lo mismo que el aviso de los 7 días hará después.
+    // Se descarta y la cadencia normal sigue su curso.
+    if (rm.tipo === 'primer_aviso' && !abierta) {
+      await marcarEstado(rm.id, 'omitido');
+      resumen.omitidos++;
+      continue;
+    }
+
     if (!abierta && !config.waTemplateRecordatorio) {
       // Sin plantilla aprobada y fuera de ventana: no se puede enviar (regla de Meta).
       await marcarEstado(rm.id, 'omitido');
@@ -173,7 +200,9 @@ export async function despachar(provider: MessagingProvider, now = new Date()): 
     if (!(await reclamarParaEnvio(rm.id))) continue;
 
     let cuerpo: string;
-    if (rm.tipo === 'retomar') {
+    if (rm.tipo === 'primer_aviso') {
+      cuerpo = texto.primerAviso(rm.nombre, estado!.proxima?.titulo ?? null);
+    } else if (rm.tipo === 'retomar') {
       // El estado se recalcula al enviar y no se guarda en la fila: entre que se programó y se
       // despacha la persona pudo terminar el cuestionario, y el mensaje quedaría diciendo algo falso.
       const [completa, hechas, previo, curso] = await Promise.all([

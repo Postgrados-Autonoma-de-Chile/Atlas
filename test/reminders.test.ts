@@ -24,6 +24,8 @@ const ESTADO_ACTIVO = {
 
 /** Segundo segmento: registradas que no están cursando. */
 let sinInscripcion: any[] = [];
+/** Primer aviso, dentro de la ventana gratuita. */
+let primerAviso: any[] = [];
 let caracterizacionCompleta = true;
 let respondidasSim = 0;
 let avancePrevio: any = null;
@@ -34,6 +36,7 @@ mock.module('../src/store/db.ts', {
 mock.module('../src/store/recordatorios.ts', {
   namedExports: {
     candidatosContinuarCurso: async () => candidatos,
+    candidatosPrimerAviso: async () => primerAviso,
     candidatosSinInscripcion: async () => sinInscripcion,
     programarRecordatorio: async (personId: string, tipo: string, clave: string, cuando: Date) => {
       if ([...rms.values()].some((r) => r.clave === clave)) return false; // UNIQUE clave_dedupe
@@ -117,6 +120,7 @@ const reset = () => {
   rms.clear();
   estadoAcad = structuredClone(ESTADO_ACTIVO);
   sinInscripcion = [];
+  primerAviso = [];
   caracterizacionCompleta = true;
   respondidasSim = 0;
   avancePrevio = null;
@@ -356,4 +360,73 @@ test('los dos segmentos conviven y se cuentan juntos', async () => {
   const tipos = [...rms.values()].map((x) => x.tipo).sort();
   assert.ok(tipos.includes('retomar') && tipos.includes('continuar_curso'));
   sinInscripcion = [];
+});
+
+// ── Primer aviso, dentro de la ventana gratuita ─────────────────────────────
+//
+// Meta clasificó nuestra plantilla de recordatorio como MARKETING: CLP 78,49 en vez de 17,66,
+// porque "vuelve a tu curso" es re-engagement por definición y ninguna redacción lo cambia. El
+// primer aviso se manda ANTES de que se cierre la ventana de 24 h, donde no hay tarifa ni
+// categoría que discutir.
+
+const primero = (over: any = {}) => ({
+  personId: 'p1', waId: '+56900050001', nombre: 'Rodrigo', cursoNombre: 'C',
+  proximaLeccion: 'Cómo describir un problema', enviadosSinActividad: 0, ...over,
+});
+
+test('el primer aviso se programa antes que el de 7 días', async () => {
+  // Se planifica primero para que, cuando ambos apliquen, gane el que no cuesta.
+  reset();
+  candidatos = [];
+  primerAviso = [primero()];
+  const r = await planificar(LUNES_MEDIODIA);
+  assert.equal(r.programados, 1);
+  assert.equal([...rms.values()][0].tipo, 'primer_aviso');
+});
+
+test('con la ventana abierta sale como texto libre y NO como plantilla', async () => {
+  reset();
+  candidatos = [];
+  primerAviso = [primero()];
+  await planificar(LUNES_MEDIODIA);
+  const rm = [...rms.values()][0];
+  rm.programadoPara = FUTURO();
+  await setJson('ult_in:+56900050001', { t: Date.now() }, 3600);
+  const { p, textos, plantillas } = fakeProvider();
+  const d = await despachar(p, LUNES_MEDIODIA);
+  assert.equal(d.enviados, 1);
+  assert.equal(plantillas.length, 0, 'gratis: no toca una plantilla');
+  assert.match(textos[0], /¿Seguimos/);
+  // La próxima lección se lee del estado AL DESPACHAR, no de la que traía el candidato: entre
+  // planificar y enviar la persona pudo avanzar, y el mensaje nombraría una microcápsula que ya hizo.
+  assert.match(textos[0], /Asistentes conversacionales/, 'dice dónde quedó, según el estado actual');
+});
+
+test('si la ventana ya se cerró, se DESCARTA en vez de gastar una plantilla', async () => {
+  // Es la regla que da sentido a todo el mecanismo: convertirlo en plantilla costaría CLP 78,49
+  // por hacer lo mismo que el aviso de los 7 días hará después, gratis para el presupuesto.
+  reset();
+  candidatos = [];
+  primerAviso = [primero()];
+  await planificar(LUNES_MEDIODIA);
+  const rm = [...rms.values()][0];
+  rm.programadoPara = FUTURO();
+  await kvDel('ult_in:+56900050001');           // ventana cerrada
+  process.env.WA_TEMPLATE_RECORDATORIO = 'x';   // aunque hubiera plantilla disponible
+  const { p, plantillas } = fakeProvider();
+  const d = await despachar(p, LUNES_MEDIODIA);
+  assert.equal(d.omitidos, 1);
+  assert.equal(d.enviados, 0);
+  assert.equal(plantillas.length, 0);
+  delete process.env.WA_TEMPLATE_RECORDATORIO;
+});
+
+test('uno solo por episodio: el dedupe lo impide dos veces el mismo día', async () => {
+  reset();
+  candidatos = [];
+  primerAviso = [primero()];
+  await planificar(LUNES_MEDIODIA);
+  const r2 = await planificar(new Date(LUNES_MEDIODIA.getTime() + 3 * 3600 * 1000));
+  assert.equal(r2.programados, 0, 'la clave de dedupe es por persona y día');
+  assert.equal(rms.size, 1);
 });

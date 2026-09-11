@@ -117,6 +117,12 @@ const Env = z.object({
   REMINDER_DIAS_INACTIVIDAD: z.coerce.number().int().positive().default(3),
   /** Tope de recordatorios sin nueva actividad del estudiante (luego se deja de insistir). */
   REMINDER_MAX_SIN_ACTIVIDAD: z.coerce.number().int().positive().default(3),
+  /**
+   * Horas de inactividad para el PRIMER aviso, que va dentro de la ventana de servicio de 24 h y
+   * por lo tanto es gratis. Tiene que ser < 24: pasada la ventana ya no hay texto libre y el aviso
+   * costaría una plantilla, que es justo lo que este umbral evita.
+   */
+  REMINDER_HORAS_PRIMER_AVISO: z.coerce.number().int().min(1).max(23).default(20),
 
   // ── Convocatoria de cohortes ──
   /** Apagada por defecto: encenderla gasta plantillas pagadas y consume el tramo de Meta. */
@@ -242,6 +248,7 @@ export const config = {
   waTemplateLang: env.WA_TEMPLATE_LANG,
   reminderDiasInactividad: env.REMINDER_DIAS_INACTIVIDAD,
   reminderMaxSinActividad: env.REMINDER_MAX_SIN_ACTIVIDAD,
+  reminderHorasPrimerAviso: env.REMINDER_HORAS_PRIMER_AVISO,
 
   convocatoriaActiva: env.CONVOCATORIA_ACTIVA === 'true',
   convocatoriaTemplate: env.CONVOCATORIA_TEMPLATE,
