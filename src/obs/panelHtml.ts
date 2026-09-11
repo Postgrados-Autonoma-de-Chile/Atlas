@@ -205,7 +205,7 @@ export function panelAccesoHtml(refrescoSeg = 60): string {
   return (
     `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
     `<meta name="robots" content="noindex,nofollow">` +
-    `<title>Cohorte ATLAS</title>` +
+    `<title>Panel ATLAS</title>` +
     `<style>${PANEL_CSS}
       .acceso{max-width:24rem;margin:4rem auto;background:#fff;border-radius:12px;padding:1.5rem;box-shadow:0 1px 3px rgba(0,0,0,.12)}
       .acceso input{width:100%;box-sizing:border-box;padding:.6rem;font-family:ui-monospace,monospace;font-size:.9rem;border:1px solid #ccd;border-radius:6px;margin:.6rem 0}
@@ -219,8 +219,8 @@ export function panelAccesoHtml(refrescoSeg = 60): string {
     </style>` +
     `<body>` +
     `<div id="acceso" class="acceso" hidden>` +
-    `<h1>Cohorte ATLAS</h1>` +
-    `<p class="sub">Panel de seguimiento. Requiere el token del panel.</p>` +
+    `<h1>Panel ATLAS</h1>` +
+    `<p class="sub">Seguimiento del programa. Requiere el token del panel.</p>` +
     `<form id="f"><input id="tk" type="password" autocomplete="off" placeholder="x-dashboard-token" autofocus>` +
     `<button type="submit">Entrar</button></form>` +
     `<p id="err" class="err" hidden></p>` +
