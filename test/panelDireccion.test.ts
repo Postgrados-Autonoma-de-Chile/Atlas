@@ -18,6 +18,7 @@ process.env.DATABASE_URL = '';
 process.env.NODE_ENV = 'test';
 
 let sqls: string[] = [];
+let params: (any[] | undefined)[] = [];
 let embudo: any = {
   registradas: 100, con_cuestionario: 80, inscritas: 60, cursando: 25,
   completaron: 20, certificadas: 18, certificadas_previas: 2, total_micro: 8,
@@ -45,8 +46,9 @@ let modulos: any[] = [
   { curso: 'Nivel Inicial', orden: 1, nombre: 'Qué es la IA', lecciones: 3, entregadas: 30, completadas: 20 },
 ];
 
-function responder(sql: string) {
+function responder(sql: string, p?: any[]) {
   sqls.push(sql);
+  params.push(p);
   if (/AS registradas/.test(sql)) return { rows: [embudo] };
   if (/GROUP BY completadas/.test(sql)) return { rows: avance };
   if (/FROM person WHERE created_at/.test(sql)) return { rows: altas };
@@ -81,7 +83,7 @@ mock.module('../src/store/kv.ts', {
 mock.module('../src/store/db.ts', {
   namedExports: {
     dbEnabled: () => true,
-    getPool: () => ({ query: async (sql: string) => responder(sql) }),
+    getPool: () => ({ query: async (sql: string, p?: any[]) => responder(sql, p) }),
   },
 });
 
@@ -90,7 +92,7 @@ const { direccionHtml } = await import('../src/obs/panelHtml');
 
 const sqlCon = (re: RegExp) => sqls.find((s) => re.test(s));
 const traer = async () => {
-  sqls = [];
+  sqls = []; params = [];
   const r = await resumenDireccion();
   assert.ok(r);
   return r!;
@@ -218,8 +220,8 @@ test('las barras pintan con style, no con el atributo fill', async () => {
 
 // ── Pulso del agente y catálogo: las métricas e interacciones del dashboard ──
 
-const traerPulso = async () => { sqls = []; const p = await pulsoAgente(); assert.ok(p); return p!; };
-const traerCatalogo = async () => { sqls = []; const c = await catalogoPanel(); assert.ok(c); return c!; };
+const traerPulso = async () => { sqls = []; params = []; const p = await pulsoAgente(); assert.ok(p); return p!; };
+const traerCatalogo = async () => { sqls = []; params = []; const c = await catalogoPanel(); assert.ok(c); return c!; };
 
 test('el feed NO consulta el dialog_id: es el teléfono de la persona', async () => {
   // Esta vista existe para poder proyectarse en una reunión. Un feed que dijera "+56 9 …" la
@@ -285,6 +287,16 @@ test('el ciclo de hoy cuenta eventos reales, etapa por etapa', async () => {
   assert.match(html, /<b>1<\/b><span>certificados/);
   assert.match(html, /envió 12 recordatorios/);
   assert.match(html, /material del curso 7 veces/);
+});
+
+test('el feed deja fuera la maquinaria interna del agente', async () => {
+  // 'turn' acompaña cada interacción y 'tool_call' se dispara varias veces dentro de una sola:
+  // catorce filas se llenarían con ellos antes de mostrar una microcápsula entregada. Siguen
+  // contándose en el gráfico por hora, que sí los quiere.
+  await traerPulso();
+  const q = sqls.find((s) => /ORDER BY ts DESC LIMIT/.test(s))!;
+  assert.match(q, /type <> ALL\(\$1\)/, 'por parámetro, no interpolado en el SQL');
+  assert.deepEqual(params[sqls.indexOf(q)]?.[0], ['turn', 'tool_call', 'tool_result']);
 });
 
 test('el catálogo distingue el curso vigente de los archivados', async () => {

@@ -437,6 +437,17 @@ export type PulsoAgente = {
   generadoEn: Date;
 };
 
+/**
+ * Lo que NO entra al feed.
+ *
+ * 'turn' acompaña a cada interacción, y 'tool_call'/'tool_result' se disparan varias veces dentro
+ * de una sola: los tres juntos taparían por completo lo que cuenta la historia —se entregó una
+ * microcápsula, se emitió un certificado—, que es para lo que existe el feed. No es que sean
+ * eventos menores; es que son de otra escala, y catorce filas se llenan con ellos antes de
+ * mostrar nada del programa. Siguen contándose en el gráfico por hora, que sí los quiere.
+ */
+const FUERA_DEL_FEED = ['turn', 'tool_call', 'tool_result'];
+
 const CACHE_PULSO = 'panel:pulso';
 const CACHE_PULSO_TTL = 30;
 
@@ -484,14 +495,14 @@ export async function pulsoAgente(): Promise<PulsoAgente | null> {
       ),
       pool.query(
         `SELECT type AS tipo, count(*)::int AS n FROM audit_log
-          WHERE ts > now() - interval '24 hours' AND type <> 'turn'
+          WHERE ts > now() - interval '24 hours' AND type <> ALL($1)
           GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 12`,
+        [FUERA_DEL_FEED],
       ),
-      // 'turn' se excluye del feed: acompaña a cada interacción y taparía todo lo demás, que es
-      // justamente lo que cuenta la historia (se entregó una microcápsula, se emitió un certificado).
       pool.query(
         `SELECT type AS tipo, ts FROM audit_log
-          WHERE type <> 'turn' ORDER BY ts DESC LIMIT 14`,
+          WHERE type <> ALL($1) ORDER BY ts DESC LIMIT 14`,
+        [FUERA_DEL_FEED],
       ),
       pool.query(
         `SELECT
