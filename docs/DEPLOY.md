@@ -17,6 +17,12 @@ printf '%s' 'sk-ant-...' | gcloud secrets versions add atlas-anthropic-api-key -
 # ...repetir para: atlas-meta-verify-token, atlas-meta-app-secret, atlas-wa-cloud-phone-number-id,
 #    atlas-wa-cloud-token, atlas-dashboard-token, atlas-token-enc-key (64 hex), atlas-gemini-api-key,
 #    atlas-smtp-* y atlas-wa-template-recordatorio. atlas-database-url ya la creó Terraform.
+# OPCIONALES (el panel funciona sin ellos; ver docs/PANEL.md):
+#    atlas-tokens-direccion         → DASHBOARD_TOKENS_DIRECCION, lista `Nombre|token` por línea.
+#                                     Se edita con scripts/token-director.mjs, no a mano.
+#    atlas-dashboard-token-direccion → DASHBOARD_TOKEN_DIRECCION, token compartido de dirección.
+# NO van en la lista de obligatorias de config.ts: exigirlos dejaría el servicio sin arrancar
+# hasta crearlos, y su ausencia no abre ninguna puerta — solo cierra la de solo-dirección.
 
 # 3) Completar el header del Scheduler con el MISMO valor de atlas-dashboard-token:
 #    infra/main.tf → google_cloud_scheduler_job.recordatorios → headers.x-dashboard-token, y re-apply.

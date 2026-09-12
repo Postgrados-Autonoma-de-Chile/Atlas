@@ -128,13 +128,13 @@ src/
 
 curriculo/nivel1.json         # el plan curricular oficial como dato versionado
 scripts/cargar-curriculo.mjs  # carga idempotente del currículo a la base
-migrations/                   # 12 migraciones node-pg-migrate (.cjs)
+migrations/                   # 16 migraciones node-pg-migrate (.cjs)
 infra/                        # Terraform del piloto GCP
 perf/                         # carga con k6 (firma HMAC real) + verificador de invariantes
 eval/golden-set.json          # casos de referencia del harness pedagógico
 contenido/                    # material del curso del piloto
-docs/                         # CURRICULO · BIENESTAR · DEPLOY · SEGURIDAD · OBSERVABILIDAD · CHATTIGO
-test/                         # 36 archivos, 234 tests
+docs/                         # CURRICULO · BIENESTAR · PANEL · DEPLOY · SEGURIDAD · OBSERVABILIDAD · CHATTIGO
+test/                         # 46 archivos, 374 tests
 ```
 
 ---
@@ -362,6 +362,8 @@ El split de Fase 11 son dos servicios Cloud Run sobre el mismo bundle: el **webh
 `GET /metrics` devuelve contadores técnicos, latencia del LLM, **métricas de negocio** desde las tablas reales y el **costo estimado del LLM** según los precios configurables `LLM_USD_*`. Catálogo de alertas y formato de logs en [`docs/OBSERVABILIDAD.md`](docs/OBSERVABILIDAD.md).
 
 Sobre el costo de WhatsApp, el dato que gobierna el diseño: **las conversaciones iniciadas por el estudiante son gratis** y las plantillas utility dentro de la ventana de 24 h también. Solo se paga la plantilla enviada fuera de esa ventana — por eso el motor de recordatorios elige texto libre cuando puede.
+
+**El panel de seguimiento** vive en `/panel` y son tres vistas para tres lectores: *Programa* —puros agregados, sin un dato personal, la única que se puede proyectar en una reunión—, *Cohorte* —nombres, teléfonos y avance, para quien opera— y *Caracterización*. El acceso tiene dos niveles: un token de operación que abre todo, y **un token por director** que abre solo la vista de Programa y deja registrado quién entró, para poder revocárselo a una persona sin rotárselo a todas. Alta y baja con [`scripts/token-director.mjs`](scripts/token-director.mjs); el detalle, lo que el panel deliberadamente no muestra y las alternativas descartadas, en [`docs/PANEL.md`](docs/PANEL.md).
 
 Seguridad: PII cifrada en reposo con AES-256-GCM, redacción de PII en logs y auditoría, auditoría minimizada (metadatos del turno, nunca el texto completo), tokens solo por header —nunca por query string, que quedaba expuesto en logs de proxies y en el Referer—, y comparación timing-safe. Estado del gate en [`docs/SEGURIDAD.md`](docs/SEGURIDAD.md).
 
