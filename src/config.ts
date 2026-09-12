@@ -74,6 +74,12 @@ const Env = z.object({
 
   // ── Seguridad / observabilidad ──
   DASHBOARD_TOKEN: z.string().default(''),
+  /**
+   * Token que abre SOLO la vista de dirección: la de puros agregados, sin un dato personal. Existe
+   * para poder repartirla a quien dirige el programa sin entregarle además la lista de personas
+   * con sus teléfonos. Vacío = no existe ese acceso, y el panel completo sigue siendo el único.
+   */
+  DASHBOARD_TOKEN_DIRECCION: z.string().default(''),
   AUDIT_RETENTION_DAYS: z.coerce.number().int().min(0).default(90),
   /** Clave AES-256-GCM (64 hex) para PII en reposo. Obligatoria en producción (F12). */
   TOKEN_ENC_KEY: z.string().regex(/^([0-9a-fA-F]{64})?$/, 'debe ser 64 caracteres hex (32 bytes)').default(''),
@@ -237,6 +243,7 @@ export const config = {
   chattigoWebhookToken: env.CHATTIGO_WEBHOOK_TOKEN,
 
   dashboardToken: env.DASHBOARD_TOKEN,
+  dashboardTokenDireccion: env.DASHBOARD_TOKEN_DIRECCION,
   auditRetentionDays: env.AUDIT_RETENTION_DAYS,
   tokenEncKey: env.TOKEN_ENC_KEY,
   devFailOpen: env.DEV_FAIL_OPEN === 'true',

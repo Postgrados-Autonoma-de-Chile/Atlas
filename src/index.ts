@@ -10,7 +10,7 @@ import { snapshot, costoEstimadoUsd } from './obs/metrics';
 import { dbResumenNegocio } from './store/metricasNegocio';
 import { kvKind, kvVivo, once } from './store/kv';
 import { verificarPorFolio } from './store/certificados';
-import { requireDashboardToken } from './routes/guard';
+import { requireDashboardToken, requireDireccionToken } from './routes/guard';
 import {
   panelCohorte, caracterizacionAgregada, caracterizacionPagina, resumenDireccion,
   pulsoAgente, catalogoPanel,
@@ -149,7 +149,7 @@ app.get('/panel', strictLimiter, (_req, res) => {
 // Es la ÚNICA vista del panel sin datos personales —son todos agregados—, así que es la que se puede
 // proyectar en una reunión sin exponer a nadie. Igual va detrás del token: quién se inscribe y
 // cuántos abandonan tampoco es información pública.
-app.get('/panel/direccion', strictLimiter, requireDashboardToken, async (_req, res) => {
+app.get('/panel/direccion', strictLimiter, requireDireccionToken, async (_req, res) => {
   // Tres bloques con ritmos distintos —el embudo se mueve en semanas, el pulso en minutos y el
   // catálogo cuando se recarga el currículo—, así que cada uno trae su propia caché y se piden a
   // la vez. Si el pulso o el catálogo fallan, la vista se dibuja sin ese bloque en vez de caerse.

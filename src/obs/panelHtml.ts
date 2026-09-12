@@ -492,6 +492,11 @@ export function panelAccesoHtml(refrescoSeg = 60): string {
   var acceso=document.getElementById('acceso'), vista=document.getElementById('vista');
   var err=document.getElementById('err'), estado=document.getElementById('estado');
   var timer=null;
+  // Un 401 significa dos cosas distintas y hay que separarlas. ANTES de entrar: el token está mal,
+  // se vuelve a pedir. DESPUÉS de haber entrado: el token es válido pero no alcanza para ESA
+  // vista —es un token de solo-dirección—, y borrar la sesión ahí sería expulsar a alguien que
+  // tiene acceso legítimo a lo que estaba viendo. Se le quita la pestaña y se le dice por qué.
+  var autenticado=false;
   function pedirToken(mensaje){
     if(timer){clearInterval(timer);timer=null;}
     try{sessionStorage.removeItem(CLAVE);}catch(e){}
@@ -512,16 +517,38 @@ export function panelAccesoHtml(refrescoSeg = 60): string {
       })
       .then(function(html){
         document.getElementById('contenido').innerHTML=html;
-        acceso.hidden=true; vista.hidden=false;
+        acceso.hidden=true; vista.hidden=false; autenticado=true;
         var h=new Date();
         estado.textContent='actualizado '+String(h.getHours()).padStart(2,'0')+':'+String(h.getMinutes()).padStart(2,'0')+':'+String(h.getSeconds()).padStart(2,'0');
         if(!timer) timer=setInterval(cargar,REFRESCO);
       })
       .catch(function(e){
-        if(e.message==='token'){ pedirToken('Ese token no es válido.'); return; }
+        if(e.message==='token'){
+          if(!autenticado){ pedirToken('Ese token no es válido.'); return; }
+          restringir(RUTA);
+          return;
+        }
         estado.textContent='sin conexión ('+e.message+') — reintentando';
       });
   }
+  // La pestaña que este token no puede abrir se retira de la barra: ofrecer una puerta cerrada y
+  // dejar que la empujen cada vez no es una interfaz, es una trampa.
+  function restringir(ruta){
+    var quitada=null;
+    Array.prototype.forEach.call(document.querySelectorAll('.tab'),function(b){
+      if(b.getAttribute('data-ruta')===ruta){ quitada=b.textContent; b.remove(); }
+    });
+    var prog=document.querySelector('.tab[data-ruta="/panel/direccion"]');
+    if(prog){
+      Array.prototype.forEach.call(document.querySelectorAll('.tab'),function(x){x.classList.remove('activa');});
+      prog.classList.add('activa');
+      RUTA='/panel/direccion';
+    }
+    estado.textContent=(quitada||'Esa vista')+': este token no da acceso';
+    if(timer){clearInterval(timer);timer=null;}
+    cargar();
+  }
+
   document.getElementById('f').addEventListener('submit',function(ev){
     ev.preventDefault();
     var v=document.getElementById('tk').value.trim();

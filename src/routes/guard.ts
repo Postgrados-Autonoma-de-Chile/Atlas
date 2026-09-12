@@ -30,3 +30,26 @@ function tokenGuard(getExpected: () => string, headerName: string, label: string
 
 /** Protege /metrics (y los futuros paneles de tutoría). Header `x-dashboard-token`. */
 export const requireDashboardToken = tokenGuard(() => config.dashboardToken, 'x-dashboard-token', 'DASHBOARD_TOKEN');
+
+/**
+ * Guard de la vista de dirección: acepta el token completo O el token de solo-dirección.
+ *
+ * POR QUÉ EXISTE: el panel tenía un token y abría las tres vistas, incluida la de cohorte con
+ * nombres y teléfonos. Compartirlo con quien solo necesita ver si el programa funciona significaba
+ * entregarle también la lista de personas. Ahora hay un segundo secreto que abre ÚNICAMENTE
+ * /panel/direccion, que es la vista sin un solo dato personal.
+ *
+ * El token completo sigue sirviendo acá: quien opera no debería necesitar dos credenciales para
+ * ver dos pestañas. La relación es de inclusión, no de exclusión.
+ *
+ * Si DASHBOARD_TOKEN_DIRECCION no está configurado, esto se comporta igual que el guard normal:
+ * no abre ninguna puerta nueva por omisión.
+ */
+export const requireDireccionToken = (req: Request, res: Response, next: NextFunction) => {
+  const soloDireccion = config.dashboardTokenDireccion;
+  if (soloDireccion) {
+    const given = req.header('x-dashboard-token') ?? '';
+    if (safeEqual(given, soloDireccion)) return next();
+  }
+  return requireDashboardToken(req, res, next);
+};
