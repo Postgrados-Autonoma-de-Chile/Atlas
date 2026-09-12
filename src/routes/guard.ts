@@ -2,6 +2,8 @@ import type { Request, Response, NextFunction } from 'express';
 import { config } from '../config';
 import { log } from '../log';
 import { safeEqual } from '../util/crypto';
+import { once } from '../store/kv';
+import { audit } from '../obs/audit';
 
 /**
  * Fábrica de middleware que exige un token en un HEADER, comparado en tiempo constante.
@@ -32,24 +34,58 @@ function tokenGuard(getExpected: () => string, headerName: string, label: string
 export const requireDashboardToken = tokenGuard(() => config.dashboardToken, 'x-dashboard-token', 'DASHBOARD_TOKEN');
 
 /**
- * Guard de la vista de dirección: acepta el token completo O el token de solo-dirección.
+ * Quién entró al panel de dirección.
  *
- * POR QUÉ EXISTE: el panel tenía un token y abría las tres vistas, incluida la de cohorte con
- * nombres y teléfonos. Compartirlo con quien solo necesita ver si el programa funciona significaba
- * entregarle también la lista de personas. Ahora hay un segundo secreto que abre ÚNICAMENTE
- * /panel/direccion, que es la vista sin un solo dato personal.
+ * Se anota UNA VEZ POR HORA por persona, no en cada petición: el panel se refresca solo cada 60
+ * segundos, así que registrar cada visita metería ~1.400 filas diarias por director y enterraría
+ * la auditoría del programa bajo el ruido de tener el panel abierto en una pestaña.
  *
- * El token completo sigue sirviendo acá: quien opera no debería necesitar dos credenciales para
- * ver dos pestañas. La relación es de inclusión, no de exclusión.
+ * En el detalle va el nombre, nunca el token. Un secreto que llega a un log deja de ser un secreto,
+ * y esta tabla se lee desde el propio panel.
+ */
+async function anotarAcceso(quien: string): Promise<void> {
+  try {
+    const hora = new Date().toISOString().slice(0, 13); // YYYY-MM-DDTHH
+    if (!(await once(`panel:acceso:${hora}:${quien}`, 3700))) return;
+    await audit({ type: 'panel_acceso', detail: { quien } });
+  } catch (e) {
+    // Que falle el registro no puede dejar a nadie fuera del panel: se avisa y se sigue.
+    log.warn('panel: no se pudo anotar el acceso', { err: String(e) });
+  }
+}
+
+/**
+ * Guard de la vista de dirección: acepta el token completo, los tokens CON NOMBRE, o el token de
+ * dirección compartido.
  *
- * Si DASHBOARD_TOKEN_DIRECCION no está configurado, esto se comporta igual que el guard normal:
- * no abre ninguna puerta nueva por omisión.
+ * El orden importa para lo que queda registrado. Los nombrados se prueban primero porque son los
+ * únicos que dicen quién entró; el compartido se anota como «compartido (sin identificar)», que es
+ * información real —alguien entró con la llave que no distingue a nadie— y hace visible cuánto
+ * queda por migrar. El token completo es el del operador y se anota como tal.
+ *
+ * Todas las comparaciones son en tiempo constante y NO se corta al primer acierto: con seis
+ * tokens da igual en la práctica, pero salir antes convierte la posición en la lista en una
+ * diferencia medible, y no hay ninguna razón para introducirla.
  */
 export const requireDireccionToken = (req: Request, res: Response, next: NextFunction) => {
-  const soloDireccion = config.dashboardTokenDireccion;
-  if (soloDireccion) {
-    const given = req.header('x-dashboard-token') ?? '';
-    if (safeEqual(given, soloDireccion)) return next();
+  const given = req.header('x-dashboard-token') ?? '';
+  if (given) {
+    let quien: string | null = null;
+    for (const t of config.dashboardTokensDireccion ?? []) {
+      if (safeEqual(given, t.token)) quien = t.nombre;
+    }
+    if (!quien && config.dashboardTokenDireccion && safeEqual(given, config.dashboardTokenDireccion)) {
+      quien = 'compartido (sin identificar)';
+    }
+    if (!quien && config.dashboardToken && safeEqual(given, config.dashboardToken)) {
+      quien = 'token de operación';
+    }
+    if (quien) {
+      void anotarAcceso(quien);
+      return next();
+    }
   }
+  // Sin coincidencia: cae al guard de siempre, que resuelve el 401 y el fail-closed sin token
+  // configurado. No se duplica esa lógica acá.
   return requireDashboardToken(req, res, next);
 };

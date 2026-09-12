@@ -642,3 +642,34 @@ export async function catalogoPanel(): Promise<CatalogoPanel | null> {
     return null;
   }
 }
+
+/**
+ * Quién abrió el panel de dirección en los últimos días.
+ *
+ * Va en la vista de COHORTE, no en la de dirección: es información de operación —quién del equipo
+ * está mirando— y no tiene nada que hacer en la pantalla que se proyecta en una reunión. Además
+ * lleva nombres de personas del equipo, así que pertenece al lado del panel que ya está detrás del
+ * token completo.
+ *
+ * Se alimenta de los eventos `panel_acceso`, que el guard escribe una vez por hora por persona.
+ */
+export type AccesoPanel = { quien: string; veces: number; ultimo: Date };
+
+export async function accesosPanel(dias = 7): Promise<AccesoPanel[]> {
+  const pool = getPool();
+  if (!pool) return [];
+  try {
+    const r = await pool.query(
+      `SELECT detail->>'quien' AS quien, count(*)::int AS veces, max(ts) AS ultimo
+         FROM audit_log
+        WHERE type = 'panel_acceso' AND ts > now() - ($1 || ' days')::interval
+          AND detail ? 'quien'
+        GROUP BY 1 ORDER BY max(ts) DESC LIMIT 20`,
+      [String(dias)],
+    );
+    return r.rows.map((x: any) => ({ quien: x.quien, veces: x.veces, ultimo: new Date(x.ultimo) }));
+  } catch (e) {
+    log.warn('panel: accesosPanel falló', { err: String(e) });
+    return [];
+  }
+}

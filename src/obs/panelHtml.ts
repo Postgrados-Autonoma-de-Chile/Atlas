@@ -1,6 +1,6 @@
 import type {
   ResumenPanel, FilaPanel, PreguntaAgregada, PaginaCaracterizacion, ResumenDireccion,
-  PulsoAgente, CatalogoPanel,
+  PulsoAgente, CatalogoPanel, AccesoPanel,
 } from '../store/panel';
 
 // Render del panel de cohorte. HTML autocontenido, sin dependencias externas: se abre desde un
@@ -350,7 +350,9 @@ export const PANEL_CSS = `
  *   que ya trae los estilos y reemplaza su contenido en cada refresco. El render es UNO: mantener
  *   dos versiones de esta tabla garantizaría que se separen.
  */
-export function panelCohorteHtml(r: ResumenPanel, fragmento = false): string {
+export function panelCohorteHtml(
+  r: ResumenPanel, fragmento = false, accesos?: AccesoPanel[],
+): string {
   const activas7 = r.filas.filter((f) => (hace(f.ultimoEn).dias ?? 999) <= 7).length;
   const conAvance = r.filas.filter((f) => f.completadas > 0).length;
 
@@ -408,6 +410,23 @@ export function panelCohorteHtml(r: ResumenPanel, fragmento = false): string {
         `<br><strong>El programa no tiene seguimiento humano para estos casos</strong> (ver ` +
         `docs/BIENESTAR.md): la respuesta automática fue la intervención completa. Esta marca es ` +
         `informativa y nadie es notificado.</p>`
+      : '') +
+    (accesos && accesos.length
+      ? `<h2 class="detalle-tit">Accesos al panel de dirección</h2>` +
+        `<div class="scroll"><table><thead><tr><th>Quién</th><th class="num">Veces</th>` +
+        `<th>Último acceso</th></tr></thead><tbody>` +
+        accesos
+          .map(
+            (a) =>
+              `<tr><td>${escapar(a.quien)}</td><td class="num">${a.veces}</td>` +
+              `<td class="mono">${escapar(fecha(a.ultimo))}</td></tr>`,
+          )
+          .join('') +
+        `</tbody></table></div>` +
+        `<p class="aviso">Se anota una vez por hora y por persona, no en cada refresco: el panel se ` +
+        `recarga solo cada minuto y registrarlo todo enterraría la auditoría del programa. ` +
+        `«Compartido (sin identificar)» es el token de dirección que no distingue a nadie — mientras ` +
+        `aparezca ahí, queda gente por pasar a un token propio.</p>`
       : '') +
     `<p class="pie">Contiene nombres y teléfonos de personas reales. No compartir por canales abiertos ` +
     `ni subir a servicios de terceros. El correo y el RUT no aparecen acá: van cifrados y este panel ` +
@@ -739,6 +758,7 @@ const ETIQUETA_EVENTO: Record<string, string> = {
   rag_busqueda: 'el tutor consultó el material del curso',
   alerta_bienestar: 'contención por señal de riesgo vital',
   alerta_identidad_rut: 'RUT detectado donde no correspondía',
+  panel_acceso: 'alguien del equipo abrió el panel',
 };
 
 /** Familia semántica del evento, para el punto de color del feed. */

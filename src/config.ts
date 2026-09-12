@@ -80,6 +80,15 @@ const Env = z.object({
    * con sus teléfonos. Vacío = no existe ese acceso, y el panel completo sigue siendo el único.
    */
   DASHBOARD_TOKEN_DIRECCION: z.string().default(''),
+  /**
+   * Tokens de dirección CON NOMBRE, uno por línea: `Nombre Apellido|token`.
+   *
+   * Un token compartido no deja saber quién miró, y revocárselo a una persona obliga a rotarlo
+   * para todas. Con uno por persona, la auditoría registra el nombre y revocar es borrar su línea.
+   * El separador es `|` porque no aparece ni en un nombre ni en un token base64url. Las líneas en
+   * blanco y las que empiezan con `#` se ignoran, para poder dejar comentarios en el secreto.
+   */
+  DASHBOARD_TOKENS_DIRECCION: z.string().default(''),
   AUDIT_RETENTION_DAYS: z.coerce.number().int().min(0).default(90),
   /** Clave AES-256-GCM (64 hex) para PII en reposo. Obligatoria en producción (F12). */
   TOKEN_ENC_KEY: z.string().regex(/^([0-9a-fA-F]{64})?$/, 'debe ser 64 caracteres hex (32 bytes)').default(''),
@@ -198,6 +207,45 @@ if (isProd) {
   if (env.DEV_FAIL_OPEN === 'true') throw new Error('DEV_FAIL_OPEN=true está prohibido en producción');
 }
 
+/** Un acceso con nombre al panel de dirección. El token nunca sale de acá hacia ningún log. */
+export type TokenNombrado = { nombre: string; token: string };
+
+/**
+ * Lee la lista `Nombre|token`, una por línea.
+ *
+ * Los problemas se avisan fuerte y se descartan en vez de romper el arranque: una línea mal escrita
+ * en el secreto no puede dejar el servicio sin levantar, pero tampoco puede pasar inadvertida —
+ * sería un director que cree tener acceso y no lo tiene. Los tokens cortos se rechazan: un secreto
+ * de seis caracteres en una ruta pública es adivinable, y aceptarlo en silencio sería peor que no
+ * tener la función.
+ */
+export function parseTokensNombrados(crudo: string): TokenNombrado[] {
+  const salida: TokenNombrado[] = [];
+  const vistos = new Set<string>();
+  for (const linea of crudo.split('\n')) {
+    const l = linea.trim();
+    if (!l || l.startsWith('#')) continue;
+    const corte = l.indexOf('|');
+    if (corte < 1) {
+      console.warn(`DASHBOARD_TOKENS_DIRECCION: línea sin separador "|", ignorada: ${l.slice(0, 20)}…`);
+      continue;
+    }
+    const nombre = l.slice(0, corte).trim();
+    const token = l.slice(corte + 1).trim();
+    if (!nombre || token.length < 16) {
+      console.warn(`DASHBOARD_TOKENS_DIRECCION: "${nombre || '(sin nombre)'}" ignorado (token ausente o de menos de 16 caracteres)`);
+      continue;
+    }
+    if (vistos.has(token)) {
+      console.warn(`DASHBOARD_TOKENS_DIRECCION: "${nombre}" repite un token ya asignado, ignorado`);
+      continue;
+    }
+    vistos.add(token);
+    salida.push({ nombre, token });
+  }
+  return salida;
+}
+
 export const config = {
   isProd,
   port: env.PORT,
@@ -244,6 +292,7 @@ export const config = {
 
   dashboardToken: env.DASHBOARD_TOKEN,
   dashboardTokenDireccion: env.DASHBOARD_TOKEN_DIRECCION,
+  dashboardTokensDireccion: parseTokensNombrados(env.DASHBOARD_TOKENS_DIRECCION),
   auditRetentionDays: env.AUDIT_RETENTION_DAYS,
   tokenEncKey: env.TOKEN_ENC_KEY,
   devFailOpen: env.DEV_FAIL_OPEN === 'true',

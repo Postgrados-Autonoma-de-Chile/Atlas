@@ -13,7 +13,7 @@ import { verificarPorFolio } from './store/certificados';
 import { requireDashboardToken, requireDireccionToken } from './routes/guard';
 import {
   panelCohorte, caracterizacionAgregada, caracterizacionPagina, resumenDireccion,
-  pulsoAgente, catalogoPanel,
+  pulsoAgente, catalogoPanel, accesosPanel,
 } from './store/panel';
 import { panelCohorteHtml, panelAccesoHtml, caracterizacionHtml, filasDetalleHtml, direccionHtml } from './obs/panelHtml';
 import { rateLimit } from './routes/rateLimit';
@@ -163,11 +163,11 @@ app.get('/panel/direccion', strictLimiter, requireDireccionToken, async (_req, r
 // Los datos. El limitador estricto va además del token: es el único endpoint con PII donde alguien
 // podría intentar adivinar el secreto a fuerza de peticiones.
 app.get('/panel/cohorte', strictLimiter, requireDashboardToken, async (req, res) => {
-  const r = await panelCohorte(config.auditRetentionDays);
+  const [r, accesos] = await Promise.all([panelCohorte(config.auditRetentionDays), accesosPanel()]);
   res.setHeader('X-Robots-Tag', 'noindex, nofollow');
   res.setHeader('Cache-Control', 'no-store');
   if (!r) return res.status(503).send('<!doctype html><meta charset="utf-8">Base de datos no disponible.');
-  res.type('html').send(panelCohorteHtml(r, req.query.vista === 'fragmento'));
+  res.type('html').send(panelCohorteHtml(r, req.query.vista === 'fragmento', accesos));
 });
 
 // Respuestas del cuestionario de caracterización.

@@ -22,6 +22,10 @@ mock.module('../src/config.ts', {
     config: {
       dashboardToken: 'TOKEN-COMPLETO-0000',
       dashboardTokenDireccion: 'TOKEN-DIRECCION-1111',
+      dashboardTokensDireccion: [
+        { nombre: 'Ana Directora', token: 'TOKEN-ANA-22222222' },
+        { nombre: 'Luis Decano', token: 'TOKEN-LUIS-3333333' },
+      ],
       devFailOpen: false,
     },
   },
@@ -78,4 +82,49 @@ test('sin el secreto configurado no se abre ninguna puerta nueva', async () => {
   assert.equal(correr(g.requireDireccionToken, 'SOLO-ESTE').siguio, true);
   assert.equal(correr(g.requireDireccionToken, '').estado, 401);
   assert.equal(correr(g.requireDireccionToken, 'lo-que-sea').estado, 401);
+});
+
+// ── Tokens con nombre: saber quién entró ──
+
+test('cada token nombrado abre la vista y registra a su dueño', async () => {
+  const { audit } = await import('../src/obs/audit');
+  assert.equal(correr(requireDireccionToken, 'TOKEN-ANA-22222222').siguio, true);
+  assert.equal(correr(requireDireccionToken, 'TOKEN-LUIS-3333333').siguio, true);
+  assert.ok(typeof audit === 'function');
+});
+
+test('el token de otra persona no sirve alterado', () => {
+  assert.equal(correr(requireDireccionToken, 'TOKEN-ANA-2222222').estado, 401);
+  assert.equal(correr(requireDireccionToken, 'TOKEN-ANA-222222223').estado, 401);
+});
+
+test('un token nombrado NO abre la cohorte', () => {
+  // Lo mismo que el compartido: son tokens de dirección, y dirección es una sola vista.
+  assert.equal(correr(requireDashboardToken, 'TOKEN-ANA-22222222').estado, 401);
+});
+
+test('el parser acepta lo que se puede escribir a mano y descarta lo peligroso', async () => {
+  const { parseTokensNombrados } = await import('../src/config.ts?parser');
+  const lista = parseTokensNombrados(
+    [
+      '# los directores del programa',
+      '',
+      'Ana Directora|TOKEN-ANA-22222222',
+      '   Luis Decano   |   TOKEN-LUIS-3333333   ',
+      'Sin separador y sin token',
+      'Corto|abc',
+      'Repetida|TOKEN-ANA-22222222',
+      '|TOKEN-SIN-NOMBRE-9999',
+    ].join('\n'),
+  );
+  assert.deepEqual(lista.map((x) => x.nombre), ['Ana Directora', 'Luis Decano']);
+  assert.equal(lista[1].token, 'TOKEN-LUIS-3333333', 'se recortan los espacios de los dos lados');
+});
+
+test('una línea rota no puede dejar el servicio sin arrancar', async () => {
+  // Un secreto mal escrito tiene que degradar, no tumbar el arranque. Pero tampoco pasar callado:
+  // sería un director convencido de que tiene acceso y sin tenerlo, sin nada en los logs.
+  const { parseTokensNombrados } = await import('../src/config.ts?parser2');
+  assert.deepEqual(parseTokensNombrados('basura sin formato'), []);
+  assert.deepEqual(parseTokensNombrados(''), []);
 });

@@ -196,3 +196,24 @@ test('el estado de cada persona viaja como clase, no como color escrito a mano',
   assert.doesNotMatch(html, /<td style="color:/);
   assert.doesNotMatch(html, /style="[^"]*#[0-9a-f]{3,6}/i, 'ningún color en un atributo style');
 });
+
+test('los accesos al panel se muestran a quien opera, no en la vista de dirección', async () => {
+  // Es información del equipo —quién está mirando—, así que va detrás del token completo y no en
+  // la pantalla que se proyecta en una reunión.
+  filas = [FILA];
+  const r = (await panelCohorte(90))!;
+  const html = panelCohorteHtml(r, true, [
+    { quien: 'Ana Directora', veces: 4, ultimo: new Date('2026-09-12T13:00:00Z') },
+    { quien: 'compartido (sin identificar)', veces: 9, ultimo: new Date('2026-09-12T12:00:00Z') },
+  ]);
+  assert.match(html, /Accesos al panel de dirección/);
+  assert.match(html, /Ana Directora<\/td><td class="num">4/);
+  assert.match(html, /queda gente por pasar a un token propio/, 'el compartido se señala como pendiente');
+});
+
+test('sin accesos registrados no se dibuja la sección', async () => {
+  filas = [FILA];
+  const r = (await panelCohorte(90))!;
+  assert.doesNotMatch(panelCohorteHtml(r, true, []), /Accesos al panel/);
+  assert.doesNotMatch(panelCohorteHtml(r, true), /Accesos al panel/);
+});
