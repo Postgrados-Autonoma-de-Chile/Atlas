@@ -25,14 +25,45 @@ import { randomBytes } from 'node:crypto';
 const PROYECTO = process.env.ATLAS_PROYECTO ?? 'postgrados-ua';
 const SECRETO = process.env.ATLAS_SECRETO_DIRECCION ?? 'atlas-tokens-direccion';
 
+// En Windows `gcloud` es un .cmd, y Node ≥18 se niega a ejecutar un .cmd sin `shell: true` (la
+// mitigación de BatBadBut). Con shell los argumentos se concatenan sin escapar, así que lo único
+// que va en la línea de comandos son estos dos valores y se validan antes: el nombre de la persona
+// NUNCA pasa por ahí — entra por stdin, con --data-file=-.
+const SEGURO = /^[A-Za-z0-9_-]+$/;
+for (const [k, v] of [['ATLAS_PROYECTO', PROYECTO], ['ATLAS_SECRETO_DIRECCION', SECRETO]]) {
+  if (!SEGURO.test(v)) {
+    console.error(`${k} tiene caracteres que no corresponden a un identificador de GCP: ${v}`);
+    process.exit(1);
+  }
+}
+const ENenWIN = process.platform === 'win32';
 const gcloud = (args, entrada) =>
-  execFileSync('gcloud', args, { input: entrada, encoding: 'utf8', stdio: ['pipe', 'pipe', 'inherit'] });
+  execFileSync(ENenWIN ? 'gcloud.cmd' : 'gcloud', args, {
+    input: entrada, encoding: 'utf8', stdio: ['pipe', 'pipe', 'inherit'], shell: ENenWIN,
+  });
 
+/**
+ * Lee la lista. Si falla, ABORTA: no devuelve vacío.
+ *
+ * La primera versión de esto atrapaba el error y seguía con una lista vacía, y por un rato
+ * `listar` respondió "sin tokens" cuando lo que pasaba era que no encontraba gcloud. Con esa
+ * lógica, un `quitar` habría escrito una versión nueva sin NINGÚN token y revocado a todos de una
+ * vez. Un fallo de lectura no puede parecerse a una lista vacía cuando lo siguiente es reescribirla.
+ */
 function leer() {
   try {
     return gcloud(['secrets', 'versions', 'access', 'latest', `--secret=${SECRETO}`, `--project=${PROYECTO}`]);
-  } catch {
-    return '';
+  } catch (e) {
+    console.error(
+      [
+        '',
+        `No se pudo leer el secreto ${SECRETO} en ${PROYECTO}.`,
+        'Si el secreto todavía no existe, créalo primero:',
+        `  gcloud secrets create ${SECRETO} --project=${PROYECTO} --replication-policy=automatic --data-file=-`,
+        '',
+      ].join('\n'),
+    );
+    process.exit(1);
   }
 }
 
