@@ -1,4 +1,4 @@
-import { getJson, setJson, kvDel } from '../store/kv';
+import { getJson, setJson, kvDel, kvVivo } from '../store/kv';
 import { dbEnabled } from '../store/db';
 import { buscarPersonaPorWaId, crearPersonaRegistrada, type Persona } from '../store/personas';
 import { cursoActivo } from '../store/cursos';
@@ -62,8 +62,26 @@ const T = {
     `¡Listo, ${nombre}! ✅ Quedaste registrado.\n\nCuando haya un curso disponible te aviso por aquí. Mientras tanto, puedes preguntarme lo que necesites.`,
 };
 
-async function getEstado(waId: string): Promise<EstadoRegistro | null> {
-  return (await getJson<EstadoRegistro>(KEY(waId))) ?? null;
+/**
+ * Lee el estado del asistente, distinguiendo "esta persona no tiene uno" de "no se pudo leer".
+ *
+ * `getJson` colapsa las dos cosas en `null` (KV falla abierto a propósito para rate-limit y
+ * locks, donde un fallo transitorio no debe bloquear). Acá SÍ importa la diferencia: un `null`
+ * dispara "primer contacto" y reenvía el consentimiento. Si Redis está caído, TODO el mundo —
+ * gente nueva y gente a mitad de registro— lee `null`, y el 17-21 de septiembre eso mandó ~500
+ * consentimientos repetidos durante los 4 días que `atlas-redis` estuvo apagada.
+ *
+ * `undefined` = no se pudo verificar (no tratar como primer contacto). `null` = de verdad no hay
+ * estado. Mismo criterio que `buscarPersonaPorWaId` ya usa para la BD (revisión F9.1).
+ */
+async function getEstado(waId: string): Promise<EstadoRegistro | null | undefined> {
+  const estado = await getJson<EstadoRegistro>(KEY(waId));
+  if (estado) return estado;
+  // Sin fila: puede ser una persona nueva (kv sano) o Redis inalcanzable (todas lo parecen).
+  // kvKind no sirve para esto — se fija al construir el cliente, no reacciona a una caída
+  // posterior — así que se comprueba con un PING real.
+  if (!(await kvVivo())) return undefined;
+  return null;
 }
 async function setEstado(waId: string, e: EstadoRegistro): Promise<void> {
   await setJson(KEY(waId), e, TTL);
@@ -92,7 +110,16 @@ export async function manejarRegistro(msg: InboundMessage, provider: MessagingPr
   if (persona === undefined) return { handled: false, persona: null };
   if (persona) return { handled: false, persona };
 
-  const estado = (await getEstado(msg.from)) ?? { etapa: 'consentimiento' as Etapa, intentos: -1 };
+  const estadoCrudo = await getEstado(msg.from);
+  // undefined = no se pudo leer el estado (Redis caído, no "persona nueva"). Reiniciar el flujo
+  // acá es exactamente el bug del 17-21 de septiembre: cada mensaje se veía como primer contacto
+  // y el consentimiento se reenviaba sin parar, a quien fuera. Fail-closed: no responder y dejar
+  // que el mensaje siga sin este asistente hasta que el estado vuelva a ser legible.
+  if (estadoCrudo === undefined) {
+    log.warn('registro: KV no disponible, no se reinicia el flujo (fail-closed)', { waId: msg.from });
+    return { handled: false, persona: null };
+  }
+  const estado = estadoCrudo ?? { etapa: 'consentimiento' as Etapa, intentos: -1 };
   const replyId = msg.type === 'interactive' ? msg.interactiveReplyId ?? '' : '';
   const texto = textoDe(msg);
 
