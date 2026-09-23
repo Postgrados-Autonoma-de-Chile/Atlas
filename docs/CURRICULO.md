@@ -162,10 +162,17 @@ duplica ni pierde avance, porque `lesson_progress` apunta a `lesson.id`, que se 
 
 ## 8. Pendiente
 
-**Las transcripciones de las microcápsulas no están cargadas como contenido RAG.** El plan describe
-las pantallas y las demostraciones, pero el texto que el estudiante leería en cada una está en los
-documentos de producción y no se ha ingerido en `content_item`. Sin eso, `buscar_contenido_curso`
-responde con las descripciones y no con el material completo.
+**~~Las transcripciones de las microcápsulas no están cargadas como contenido RAG~~ — ya estaba
+resuelto, esta nota estaba desactualizada.** Verificado el 23-sep-2026 directo contra producción,
+no solo revisando el código: `content_item` tiene un ítem tipo `material` por microcápsula
+(`curriculo/contenido-nivel1.json`, secciones 3/5/6/7 de cada documento — resultados observables,
+guion del Anfitrión y pantalla por pantalla), cargado por `ingerir-contenido.ts contenido`, con
+17 `content_chunk` embebidos. Se ejecutó `buscarContenidoCurso()` de verdad —la misma función que
+usa la tool del tutor, no una reimplementación— con una pregunta real ("¿cómo verifico si una
+información es confiable?") y devolvió 6 resultados relevantes (similitud 0,65-0,75), encabezados
+por el material correcto de la Microcápsula 5. Diagnóstico reutilizable en
+`scripts/verificar-rag.mjs` (qué hay cargado) y `scripts/verificar-busqueda-rag.ts` (que la
+búsqueda de verdad lo encuentra), ambos en la imagen de `atlas-rag`.
 
 **La retroalimentación por ítem no existe en la fuente.** Las cápsulas 5 y 7 piden en su diseño web
 «explicación breve por tarjeta» y «retroalimentación matizada» para los casos frontera, pero el
