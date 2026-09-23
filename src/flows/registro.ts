@@ -2,7 +2,9 @@ import { getJson, setJson, kvDel, kvVivo } from '../store/kv';
 import { dbEnabled } from '../store/db';
 import { buscarPersonaPorWaId, crearPersonaRegistrada, type Persona } from '../store/personas';
 import { cursoActivo } from '../store/cursos';
-import { validarNombre, validarEmail, normalizarEmail, capitalizar } from '../core/identidad';
+import {
+  validarNombre, validarEmail, normalizarEmail, capitalizar, quitarRepetidoDeNombre,
+} from '../core/identidad';
 import { audit } from '../obs/audit';
 import { log } from '../log';
 import type { InboundMessage, MessagingProvider } from '../messaging/types';
@@ -44,9 +46,9 @@ const T = {
   rechazo:
     'Sin problema 🙂 Cuando quieras registrarte, escríbeme "quiero registrarme". Igual puedo responder tus preguntas generales.',
   nombre: '¡Gracias! Partamos: ¿cuál es tu *nombre*? (solo el nombre)',
-  nombreInvalido: 'Mmm, eso no parece un nombre 🙂 ¿Me lo escribes de nuevo? (solo tu nombre, sin números)',
+  nombreInvalido: 'Mmm, eso no parece un nombre 🙂 ¿Me lo escribes de nuevo? (solo tu nombre, sin nada más)',
   apellido: (nombre: string) => `Un gusto, ${nombre} 👋 ¿Cuál es tu *apellido*?`,
-  apellidoInvalido: 'Ese apellido no me calza 🙂 ¿Me lo repites? (solo el apellido, sin números)',
+  apellidoInvalido: 'Ese apellido no me calza 🙂 ¿Me lo repites? (solo el apellido, sin repetir tu nombre)',
   email: 'Perfecto. Ahora tu *correo electrónico* (ahí llegará tu certificado al finalizar):',
   emailInvalido: 'Ese correo no parece válido 🤔 Revísalo y escríbelo de nuevo (ej: nombre@dominio.cl):',
   pausa: 'No hay problema, sigamos conversando y retomamos tu registro después 🙂',
@@ -178,15 +180,19 @@ export async function manejarRegistro(msg: InboundMessage, provider: MessagingPr
         invalido: T.nombreInvalido,
       });
 
-    case 'apellido':
+    case 'apellido': {
+      // Si la persona ya dio el nombre completo (con apellidos) en el paso anterior y ahora
+      // repite el apellido, no se guarda duplicado: ver quitarRepetidoDeNombre().
+      const limpio = (v: string) => quitarRepetidoDeNombre(estado.nombre ?? '', v);
       return capturarCampo(msg, provider, estado, {
-        valida: validarNombre,
+        valida: (v) => validarNombre(limpio(v)),
         alValido: async (v) => {
-          await setEstado(msg.from, { ...estado, etapa: 'email', apellido: capitalizar(v), intentos: 0 });
+          await setEstado(msg.from, { ...estado, etapa: 'email', apellido: capitalizar(limpio(v)), intentos: 0 });
           await provider.enviarTexto(msg.from, T.email);
         },
         invalido: T.apellidoInvalido,
       });
+    }
 
     case 'email':
       return capturarCampo(msg, provider, estado, {

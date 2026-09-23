@@ -26,6 +26,7 @@ COPY migrations ./migrations
 COPY curriculo ./curriculo
 COPY scripts/cargar-curriculo.mjs ./scripts/cargar-curriculo.mjs
 COPY scripts/reporte-cohorte.mjs ./scripts/reporte-cohorte.mjs
+COPY scripts/revisar-nombres.mjs ./scripts/revisar-nombres.mjs
 
 # La ingesta al RAG sí necesita el código: reutiliza el chunker y el cliente de embeddings del
 # servicio en vez de duplicarlos, que es lo que hay que evitar en un corpus que debe quedar

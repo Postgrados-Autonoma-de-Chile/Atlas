@@ -6,8 +6,10 @@ process.env.REDIS_URL = '';
 process.env.DATABASE_URL = '';
 process.env.NODE_ENV = 'test';
 
-const { validarRut, normalizarRut, validarEmail, normalizarEmail, validarNombre, capitalizar, hashLookup } =
-  await import('../src/core/identidad');
+const {
+  validarRut, normalizarRut, validarEmail, normalizarEmail, validarNombre, capitalizar, hashLookup,
+  quitarRepetidoDeNombre,
+} = await import('../src/core/identidad');
 
 test('validarRut: dígitos verificadores correctos (módulo 11)', () => {
   assert.equal(validarRut('11111111-1'), true);
@@ -62,4 +64,45 @@ test('hashLookup: determinista, 64 hex, sensible al valor normalizado', () => {
   assert.match(h1, /^[0-9a-f]{64}$/);
   assert.equal(h1, hashLookup('rodrigo@uautonoma.cl'));
   assert.notEqual(h1, hashLookup('otro@uautonoma.cl'));
+});
+
+// ── Hallazgo en producción (F14): un signo de pregunta, un correo o una credencial profesional
+// pasaban como "nombre" porque la spec original solo exigía "sin dígitos". Estos casos son
+// literales de personas reales que quedaron registradas así el 22-sep-2026. ──
+
+test('validarNombre: rechaza una pregunta completa disfrazada de nombre', () => {
+  assert.equal(validarNombre('Hola, Cuál Sería El Valor ? Necesito Saber El Valor'), false);
+  assert.equal(validarNombre('Y Muchas Gracias Mi Nombre Es : Oscar Andres Y Mis Apellidos'), false);
+});
+
+test('validarNombre: rechaza un correo pegado dentro de la respuesta', () => {
+  assert.equal(validarNombre('Sara Fredes Hfredes@indap.cl Ahí Está El Apellido'), false);
+  assert.equal(validarNombre('Martha Turiso Marthaturizzo@gmail.com'), false);
+});
+
+test('validarNombre: rechaza más de 5 palabras (credenciales, frases)', () => {
+  assert.equal(validarNombre('Magister En Derecho Penal Y Procesal Penal Urbina Reyes'), false);
+});
+
+test('validarNombre: sigue aceptando nombres y apellidos chilenos normales, incluso dobles', () => {
+  assert.equal(validarNombre('Rodrigo'), true);
+  assert.equal(validarNombre('María José'), true);
+  assert.equal(validarNombre('Juan Carlos Andrés'), true);
+  assert.equal(validarNombre('Gabriela Silva Arancibia'), true); // nombre + 2 apellidos: 3 palabras, ok
+  assert.equal(validarNombre('Silva Arancibia'), true); // 5 o menos, sin señales de basura
+});
+
+test('quitarRepetidoDeNombre: quita del apellido lo que ya venía en el nombre', () => {
+  assert.equal(quitarRepetidoDeNombre('Gabriela Silva', 'Silva Arancibia'), 'Arancibia');
+  assert.equal(quitarRepetidoDeNombre('Bessy Gallardo Prado', 'Gallardo Prado'), '');
+  assert.equal(quitarRepetidoDeNombre('Samuel Trangulado', 'Samuel'), '');
+});
+
+test('quitarRepetidoDeNombre: ignora mayúsculas y acentos al comparar', () => {
+  assert.equal(quitarRepetidoDeNombre('José Pérez', 'perez Gómez'), 'Gómez');
+});
+
+test('quitarRepetidoDeNombre: sin repetición, no cambia nada', () => {
+  assert.equal(quitarRepetidoDeNombre('Rodrigo', 'Palma'), 'Palma');
+  assert.equal(quitarRepetidoDeNombre('', 'Palma'), 'Palma');
 });
