@@ -81,7 +81,7 @@ if (!afectadas.length) {
 console.log(`${afectadas.length} de ${rows.length} personas registradas necesitan revisión manual:\n`);
 for (const r of afectadas) {
   const cert = r.certificada ? '  ⚠️  YA TIENE CERTIFICADO EMITIDO CON ESTE NOMBRE' : '';
-  console.log(`· ${r.wa_id ?? '(sin whatsapp)'}  —  registrada ${new Date(r.created_at).toLocaleString('es-CL')}${cert}`);
+  console.log(`· ${r.id}  ${r.wa_id ?? '(sin whatsapp)'}  —  registrada ${new Date(r.created_at).toLocaleString('es-CL')}${cert}`);
   console.log(`  nombre:   "${r.nombre}"`);
   console.log(`  apellido: "${r.apellido}"`);
   for (const m of r.motivos) console.log(`  · ${m}`);
