@@ -69,6 +69,32 @@ CORRECTA = {1: 0, 3: 2}
 # propósito: practicar la pauta de cuatro preguntas del paso DEFINO.
 CATEGORIAS_C2 = ['Qué ocurre', 'Qué necesito', 'Qué información tengo', 'Qué condiciones debo considerar']
 
+# ── "Me llevo una herramienta": momento 5 de la arquitectura didáctica (Plan Nacional
+# §Arquitectura didáctica) — "Recurso visual: entregar una regla, pauta o esquema reutilizable
+# que sintetice el aprendizaje de la microcápsula". Hasta la revisión F15 esto no se cargaba como
+# dato: docs/CURRICULO.md lo dejó anotado como pendiente ("vive dentro del guion de cierre").
+#
+# Cada documento de producción lo nombra distinto (Herramienta / Herramientas / Fórmula /
+# Semáforo) y lo ubica en un punto distinto de su propia secuencia — no hay una fila con nombre
+# fijo que se pueda extraer con una regex genérica sin arriesgar tomar la fila equivocada. Se
+# transcribe a mano desde la fila de la "4. Secuencia instruccional detallada" de cada documento
+# cuyo Propósito es justamente "entregar" la regla/pauta/fórmula (no "consolidar la ruta", que es
+# el componente DEFINO✓/PREGUNTO✓ reutilizado en todas las cápsulas y NO es contenido propio de
+# ninguna cápsula en particular).
+#
+# La cápsula 6 no tiene ninguna fila así en su documento de producción: es la cápsula de
+# transferencia ("aplica lo ya aprendido a casos distintos"), no introduce una regla nueva. La
+# cápsula 8 tampoco: su cierre ES su propio producto —la ficha— y ya se entrega aparte
+# (fichaCierre.ts). Dejarlas sin "herramienta" es fiel a la fuente, no un hueco.
+HERRAMIENTA = {
+    1: '1. DEFINO: ¿qué necesito resolver?',
+    2: '4 preguntas para definir un problema:\n¿Qué ocurre? ¿Qué necesito? ¿Qué información tengo? ¿Qué condiciones debo considerar?',
+    3: '4 elementos para pedir una ayuda útil:\nNECESITO + CONTEXTO + CONDICIONES + RESULTADO.',
+    4: 'Cinco formatos útiles:\nLista, tabla, pasos, ventajas/desventajas, criterios.',
+    5: '4 preguntas antes de usar información importante:\nFUENTE, FECHA, COINCIDENCIA, CONSECUENCIA.',
+    7: 'Tres niveles para decidir cómo usar la IA:\nIA puede ayudar / IA + verificación / necesito fuente o persona competente.',
+}
+
 microcapsulas = []
 for c in caps:
     o = c['orden']
@@ -92,6 +118,7 @@ for c in caps:
         resultados_observables=c['resultados'],
         guion_apertura=c['guion_apertura'],
         guion_cierre=c['guion_cierre'],
+        herramienta=HERRAMIENTA.get(o),
         tipo='actividad_cierre' if o == 8 else 'capsula',
         interaccion=dict(
             tipo=tipo,

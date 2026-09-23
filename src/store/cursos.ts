@@ -30,6 +30,13 @@ export type Leccion = {
    *  del guion se entrega igual — es contenido curricular, no una acotación de producción. */
   guionApertura: string | null;
   guionCierre: string | null;
+  /** "Me llevo una herramienta" (Plan Nacional §Arquitectura didáctica, momento 5): una regla,
+   *  pauta o fórmula reutilizable, propia de la cápsula — no una narración del Anfitrión. Se
+   *  entrega tal cual, sin parafraseo (ver el prompt en core/channel.ts): acá la palabra exacta
+   *  importa de una forma en que guionApertura/guionCierre no. NULL en cápsulas que no
+   *  introducen una regla nueva (6, que transfiere a casos distintos; 8, que entrega su propio
+   *  producto, la ficha de cierre) — fiel a la fuente, no un hueco. */
+  herramienta: string | null;
 };
 
 export type EstadoAcademico = {
@@ -146,7 +153,7 @@ export async function entregarLeccionActual(personId: string): Promise<{ leccion
     const r = await pool.query(
       `SELECT l.id, l.orden, l.titulo, l.descripcion, l.tipo, l.duracion_min,
               l.paso_ruta, l.proposito, l.pregunta_movilizadora, l.producto_evidencia,
-              l.resultados_observables, l.guion_apertura, l.guion_cierre
+              l.resultados_observables, l.guion_apertura, l.guion_cierre, l.herramienta
        FROM lesson l JOIN module m ON m.id = l.module_id
        WHERE m.course_id = $1
          AND NOT EXISTS (SELECT 1 FROM lesson_progress lp
@@ -184,6 +191,7 @@ export async function entregarLeccionActual(personId: string): Promise<{ leccion
         resultadosObservables: Array.isArray(l.resultados_observables) ? l.resultados_observables : [],
         guionApertura: l.guion_apertura ?? null,
         guionCierre: l.guion_cierre ?? null,
+        herramienta: l.herramienta ?? null,
       },
       posicion: `${l.orden} de ${estado.totalLecciones}`,
     };

@@ -53,6 +53,7 @@
       ],
       "guion_apertura": "A veces tenemos un problema bastante simple, pero no sabemos por dónde empezar: elegir un curso, organizar un viaje, entender un trámite o comparar opciones. Una inteligencia artificial puede ayudarnos a ordenar esas ideas. Pero hay algo importante: no decide por nosotros. En esta cápsula veremos cómo puede convertirse en una ayuda para empezar.",
       "guion_cierre": "Ya vimos que la IA puede ayudarnos a ordenar un problema y explorar alternativas. Pero antes de preguntarle cualquier cosa, necesitamos entender bien nuestra propia necesidad. Una pregunta poco clara suele producir una respuesta poco útil. Eso es justamente lo que veremos ahora.",
+      "herramienta": "1. DEFINO: ¿qué necesito resolver?",
       "tipo": "capsula",
       "interaccion": {
         "tipo": "seleccion_unica",
@@ -99,6 +100,7 @@
       ],
       "guion_apertura": "Decir “necesito ayuda con mi trabajo” puede significar muchas cosas. ¿Quieres encontrar otro empleo, organizar mejor tu tiempo o aprender algo nuevo? Antes de preguntarle a una inteligencia artificial tenemos que hacer algo nosotros: entender bien qué queremos resolver. No tiene que ser complicado. Basta con ordenar algunas ideas.",
       "guion_cierre": "Cuando puedes explicar claramente qué está pasando, qué necesitas y qué condiciones tienes, ya avanzaste bastante. El siguiente paso es transformar esa necesidad en una pregunta o instrucción que la IA pueda entender y responder de una manera más útil.",
+      "herramienta": "4 preguntas para definir un problema:\n¿Qué ocurre? ¿Qué necesito? ¿Qué información tengo? ¿Qué condiciones debo considerar?",
       "tipo": "capsula",
       "interaccion": {
         "tipo": "clasificacion",
@@ -145,6 +147,7 @@
       ],
       "guion_apertura": "No necesitas aprender palabras técnicas para conversar con una inteligencia artificial. Lo importante es explicar bien qué necesitas. Puedes hacerlo como se lo explicarías a otra persona: diciendo qué quieres, entregando el contexto necesario, mencionando tus condiciones y explicando qué tipo de resultado esperas.",
       "guion_cierre": "No existe una pregunta perfecta. Si la primera respuesta no te sirve, puedes agregar información, aclarar lo que necesitas o pedir otro formato. Conversar con una IA también es ir mejorando la solicitud. Y eso nos lleva al siguiente paso: organizar la información para poder usarla.",
+      "herramienta": "4 elementos para pedir una ayuda útil:\nNECESITO + CONTEXTO + CONDICIONES + RESULTADO.",
       "tipo": "capsula",
       "interaccion": {
         "tipo": "seleccion_unica",
@@ -191,6 +194,7 @@
       ],
       "guion_apertura": "A veces una inteligencia artificial nos entrega una respuesta larga y pensamos: “Bueno… ¿y ahora qué hago con todo esto?”. Una ventaja es que podemos pedirle que reorganice la información hasta que resulte útil para nosotros: en una tabla, una lista, pasos o criterios para comparar.",
       "guion_cierre": "Ya vimos que no tenemos que conformarnos con el primer formato de respuesta. Podemos pedir que la información se ordene para entenderla mejor. Pero hay algo importante: una respuesta puede verse clara y ordenada, y aun así contener errores. Por eso, el siguiente paso es verificar.",
+      "herramienta": "Cinco formatos útiles:\nLista, tabla, pasos, ventajas/desventajas, criterios.",
       "tipo": "capsula",
       "interaccion": {
         "tipo": "clasificacion",
@@ -242,6 +246,7 @@
       ],
       "guion_apertura": "Una respuesta de inteligencia artificial puede sonar segura, estar muy bien escrita e incluso parecer totalmente lógica… y aun así contener un error. Por eso hay algo que nunca deberíamos delegar completamente: comprobar la información cuando importa. No se trata de desconfiar de todo, sino de saber cuándo conviene revisar.",
       "guion_cierre": "Verificar no significa desconfiar de todo. Significa saber cuándo una información merece una segunda mirada. Si puede afectar una decisión importante, buscamos una fuente confiable antes de actuar. Ahora vamos a usar todo lo aprendido en situaciones distintas de la vida diaria.",
+      "herramienta": "4 preguntas antes de usar información importante:\nFUENTE, FECHA, COINCIDENCIA, CONSECUENCIA.",
       "tipo": "capsula",
       "interaccion": {
         "tipo": "clasificacion",
@@ -337,7 +342,8 @@
           }
         ]
       },
-      "fuente": "Microcapsula_06_Ejemplos_prácticos_de_uso_diario.txt"
+      "fuente": "Microcapsula_06_Ejemplos_prácticos_de_uso_diario.txt",
+      "herramienta": null
     },
     {
       "orden": 7,
@@ -354,6 +360,7 @@
       ],
       "guion_apertura": "La inteligencia artificial puede ayudarnos a pensar una decisión, pero existen situaciones que no deberíamos dejar en sus manos. Cuando hay salud, dinero, derechos, seguridad o consecuencias importantes, necesitamos saber dónde termina la ayuda de una IA y dónde empieza la responsabilidad de una persona, una institución o un especialista.",
       "guion_cierre": "La mejor decisión no es la que toma la IA. Es la que tú puedes tomar con mejor información, después de revisar aquello que importa y consultar a quien corresponda cuando sea necesario. Ya tenemos toda la ruta. Ahora vamos a usarla completa en un problema real o en un caso que elijas.",
+      "herramienta": "Tres niveles para decidir cómo usar la IA:\nIA puede ayudar / IA + verificación / necesito fuente o persona competente.",
       "tipo": "capsula",
       "interaccion": {
         "tipo": "clasificacion",
@@ -430,7 +437,8 @@
           }
         ]
       },
-      "fuente": "Microcapsula_08_Actividad_de_cierre_Resolver_un_problema_personal_o_familiar.txt"
+      "fuente": "Microcapsula_08_Actividad_de_cierre_Resolver_un_problema_personal_o_familiar.txt",
+      "herramienta": null
     }
   ],
   "caracterizacion": {

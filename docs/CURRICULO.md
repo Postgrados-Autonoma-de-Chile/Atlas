@@ -49,6 +49,7 @@ Dictaba **otro curso**. No le faltaban piezas: los contenidos no coincidían.
 | No pedir RUT ni datos sensibles en ejemplos | Microcápsula 02 §13 | Prohibición explícita en el prompt | `src/core/channel.ts` |
 | "Prompt" solo tras la expresión cotidiana | Microcápsula 02 §10 | Instrucción en el prompt | `src/core/channel.ts` |
 | Prioridad material oficial > modelo | Encargo §16 · Plan Nacional | Orden de prioridad explícito; prohibición de inventar cápsulas u objetivos | `src/core/channel.ts` |
+| "Me llevo una herramienta": regla/pauta/esquema reutilizable, momento 5 de cada cápsula | Plan Nacional §Arquitectura didáctica · fila "Herramienta" de cada Microcápsula 01-08 | Campo `lesson.herramienta`, propio y separado del guion de cierre; se entrega textual, sin parafraseo | `migrations/0017`, `curriculo/nivel1.json`, `src/store/cursos.ts`, `src/core/channel.ts` |
 
 ---
 
@@ -166,13 +167,17 @@ las pantallas y las demostraciones, pero el texto que el estudiante leería en c
 documentos de producción y no se ha ingerido en `content_item`. Sin eso, `buscar_contenido_curso`
 responde con las descripciones y no con el material completo.
 
-**El momento "Me llevo una herramienta"** (la pauta reutilizable de cada cápsula) no se entrega como
-pieza aparte: hoy vive dentro del guion de cierre. El plan lo define como recurso propio, exportable.
-
 **La retroalimentación por ítem no existe en la fuente.** Las cápsulas 5 y 7 piden en su diseño web
 «explicación breve por tarjeta» y «retroalimentación matizada» para los casos frontera, pero el
 documento entrega un solo párrafo de «Retroalimentación prevista» por actividad. Redactar uno por
 ítem sería escribir currículo, así que el criterio se entrega completo al cerrar.
 
-**El momento "Me llevo una herramienta"** es el último pendiente curricular: hoy vive dentro del
-guion de cierre y el plan lo define como recurso propio, exportable.
+**~~El momento "Me llevo una herramienta"~~ — resuelto (F15).** Ya no vive dentro del guion de
+cierre: `lesson.herramienta` es su propio campo, transcrito de la fila "Herramienta" de cada
+documento de producción (no de la fila "Ruta", que es el componente DEFINO✓/PREGUNTO✓ compartido
+por las 8 cápsulas). Se entrega textual, en bloque propio, sin el parafraseo que sí se permite
+para guionApertura/guionCierre — acá la palabra exacta importa (una fórmula, una lista de
+preguntas). NULL en las cápsulas 6 y 8, fiel a la fuente: la 6 transfiere lo ya aprendido a casos
+distintos sin introducir una regla nueva, y la 8 entrega su propio producto, la ficha de cierre
+(ya implementada). Ver `scripts/construir-curriculo.py` (comentario `HERRAMIENTA`),
+`migrations/0017_herramienta-cierre.cjs` y `test/herramienta.test.ts`.

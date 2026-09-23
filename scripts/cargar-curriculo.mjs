@@ -73,8 +73,9 @@ async function cargar(c) {
     const l = await c.query(
       `INSERT INTO lesson (module_id, orden, titulo, descripcion, tipo, duracion_min,
                            paso_ruta, proposito, pregunta_movilizadora, producto_evidencia,
-                           resultados_observables, guion_apertura, guion_cierre, fuente_curricular)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14)
+                           resultados_observables, guion_apertura, guion_cierre, herramienta,
+                           fuente_curricular)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14,$15)
        ON CONFLICT ON CONSTRAINT lesson_orden_unico DO UPDATE SET
          titulo=EXCLUDED.titulo, descripcion=EXCLUDED.descripcion, tipo=EXCLUDED.tipo,
          duracion_min=EXCLUDED.duracion_min, paso_ruta=EXCLUDED.paso_ruta,
@@ -82,11 +83,12 @@ async function cargar(c) {
          producto_evidencia=EXCLUDED.producto_evidencia,
          resultados_observables=EXCLUDED.resultados_observables,
          guion_apertura=EXCLUDED.guion_apertura, guion_cierre=EXCLUDED.guion_cierre,
-         fuente_curricular=EXCLUDED.fuente_curricular
+         herramienta=EXCLUDED.herramienta, fuente_curricular=EXCLUDED.fuente_curricular
        RETURNING id`,
       [moduloId, mc.orden, mc.titulo, mc.proposito, mc.tipo, mc.duracion_min, mc.paso_ruta,
         mc.proposito, mc.pregunta_movilizadora, mc.producto_evidencia,
-        JSON.stringify(mc.resultados_observables), mc.guion_apertura, mc.guion_cierre, mc.fuente],
+        JSON.stringify(mc.resultados_observables), mc.guion_apertura, mc.guion_cierre,
+        mc.herramienta ?? null, mc.fuente],
     );
     const lessonId = l.rows[0].id;
     resumen.lecciones++;

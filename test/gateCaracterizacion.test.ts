@@ -61,7 +61,7 @@ mock.module('../src/store/cursos.ts', {
           id: 'l1', orden: 1, titulo: ESTADO.proxima.titulo, descripcion: null, tipo: 'capsula',
           duracionMin: 6, materiales: [], pasoRuta: 'ENTRADA',
           proposito: null, preguntaMovilizadora: null, productoEvidencia: null,
-          resultadosObservables: [], guionApertura: null, guionCierre: null,
+          resultadosObservables: [], guionApertura: null, guionCierre: null, herramienta: null,
         },
       };
     },
