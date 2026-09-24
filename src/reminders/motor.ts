@@ -108,12 +108,16 @@ const texto = {
     `\n\n(Si prefieres no recibir recordatorios, dime "no enviar recordatorios".)`,
 };
 
-export type ResumenPlanificacion = { candidatos: number; programados: number; omitidosPorTope: number };
+export type ResumenPlanificacion = { candidatos: number; programados: number; omitidosPorTope: number; diferidos: number };
 
 /** Etapa 1: programa recordatorios de continuidad para inactivos con opt-in. Idempotente. */
 export async function planificar(now = new Date()): Promise<ResumenPlanificacion> {
   let programados = 0;
   let omitidosPorTope = 0;
+  let diferidos = 0;
+  // El orden en que se consumen los tres segmentos es la prioridad del tope: primero el aviso
+  // gratuito, después quien está cursando, y al final quien nunca se inscribió.
+  const sinCupo = () => programados >= config.reminderMaxPorCorrida;
 
   // Vencer PRIMERO. Si no, un cupo que expiró hace un minuto todavía figura como activo y recibe
   // un "continúa tu curso" que ya no puede cumplir — y el estudiante descubre el vencimiento
@@ -124,6 +128,7 @@ export async function planificar(now = new Date()): Promise<ResumenPlanificacion
   // apliquen, la persona reciba el que no cuesta.
   const primeros = await candidatosPrimerAviso(config.reminderHorasPrimerAviso);
   for (const c of primeros) {
+    if (sinCupo()) { diferidos++; continue; }
     const clave = `${c.personId}:primer_aviso:${Math.floor(now.getTime() / (24 * 3600 * 1000))}`;
     if (await programarRecordatorio(c.personId, 'primer_aviso', clave, proximaVentanaHabil(now))) programados++;
   }
@@ -131,6 +136,7 @@ export async function planificar(now = new Date()): Promise<ResumenPlanificacion
   const candidatos = await candidatosContinuarCurso(config.reminderDiasInactividad);
   for (const c of candidatos) {
     if (c.enviadosSinActividad >= config.reminderMaxSinActividad) { omitidosPorTope++; continue; }
+    if (sinCupo()) { diferidos++; continue; }
     const clave = claveDedupe(c.personId, 'continuar_curso', now, config.reminderDiasInactividad);
     const cuando = proximaVentanaHabil(now);
     if (await programarRecordatorio(c.personId, 'continuar_curso', clave, cuando)) programados++;
@@ -140,6 +146,7 @@ export async function planificar(now = new Date()): Promise<ResumenPlanificacion
   const sinInscripcion = await candidatosSinInscripcion(config.reminderDiasInactividad);
   for (const c of sinInscripcion) {
     if (c.enviadosSinActividad >= config.reminderMaxSinActividad) { omitidosPorTope++; continue; }
+    if (sinCupo()) { diferidos++; continue; }
     const clave = claveDedupe(c.personId, 'retomar', now, config.reminderDiasInactividad);
     if (await programarRecordatorio(c.personId, 'retomar', clave, proximaVentanaHabil(now))) programados++;
   }
@@ -148,10 +155,10 @@ export async function planificar(now = new Date()): Promise<ResumenPlanificacion
   if (total) {
     log.info('recordatorios: planificación', {
       primerAviso: primeros.length, cursando: candidatos.length,
-      sinInscripcion: sinInscripcion.length, programados, omitidosPorTope,
+      sinInscripcion: sinInscripcion.length, programados, omitidosPorTope, diferidos,
     });
   }
-  return { candidatos: total, programados, omitidosPorTope };
+  return { candidatos: total, programados, omitidosPorTope, diferidos };
 }
 
 export type ResumenDespacho = { pendientes: number; enviados: number; reprogramados: number; fallidos: number; omitidos: number; cancelados: number };

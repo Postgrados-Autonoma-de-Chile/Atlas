@@ -10,6 +10,7 @@ process.env.NODE_ENV = 'test';
 // importarse, así que cambiar process.env después no tiene ningún efecto. Se mockea el módulo.
 let plantillaConfigurada = '';
 let plantillaCuestionario = '';
+let maxPorCorrida = 1000; // por defecto no limita: los tests que no lo prueban no deben verse afectados
 
 type Rm = { id: string; personId: string; tipo: string; estado: string; clave: string; programadoPara: Date; intentos: number; waMessageId?: string | null };
 const rms = new Map<string, Rm>();
@@ -41,6 +42,7 @@ mock.module('../src/config.ts', {
       waTemplateLang: 'es',
       reminderDiasInactividad: 3,
       reminderMaxSinActividad: 3,
+      get reminderMaxPorCorrida() { return maxPorCorrida; },
       reminderHorasPrimerAviso: 20,
       inscripcionDiasVigencia: 30,
     },
@@ -139,6 +141,7 @@ const reset = () => {
   rms.clear();
   plantillaConfigurada = '';
   plantillaCuestionario = '';
+  maxPorCorrida = 1000;
   estadoAcad = structuredClone(ESTADO_ACTIVO);
   sinInscripcion = [];
   primerAviso = [];
@@ -185,6 +188,45 @@ test('planificar: respeta el tope de insistencia y el dedupe re-ejecutando', asy
   assert.equal(r1.omitidosPorTope, 1);
   const r2 = await planificar(LUNES_MEDIODIA);
   assert.equal(r2.programados, 0, 'el dedupe impide duplicar');
+});
+
+// El tope de arriba es por persona. Este es por tanda, y son cosas distintas: el 24-09-2026, al
+// reanudar el scheduler tras 3 semanas pausado, el backlog entero se planificó de una vez y salieron
+// 83 plantillas en un minuto desde un número recién registrado.
+test('planificar: el tope por corrida difiere el excedente, que entra en las corridas siguientes', async () => {
+  reset();
+  maxPorCorrida = 2;
+  candidatos = [];
+  sinInscripcion = [1, 2, 3, 4, 5].map((n) => ({
+    personId: `s${n}`, waId: `+5690005000${n}`, nombre: `P${n}`, enviadosSinActividad: 0,
+  }));
+
+  const r1 = await planificar(LUNES_MEDIODIA);
+  assert.equal(r1.programados, 2, 'solo entran los que caben en el tope');
+  assert.equal(r1.diferidos, 3, 'el resto queda diferido, no descartado');
+
+  const r2 = await planificar(LUNES_MEDIODIA);
+  assert.equal(r2.programados, 2, 'la corrida siguiente toma a los que faltaban');
+  assert.equal(r2.diferidos, 1);
+
+  const r3 = await planificar(LUNES_MEDIODIA);
+  assert.equal(r3.programados, 1, 'la tercera termina de drenar el backlog');
+  assert.equal(r3.diferidos, 0);
+
+  assert.equal(rms.size, 5, 'las 5 personas terminan programadas: el tope reparte, no pierde');
+});
+
+test('planificar: con el cupo justo, el aviso gratuito gana al que cuesta plantilla', async () => {
+  reset();
+  maxPorCorrida = 1;
+  candidatos = [];
+  primerAviso = [{ personId: 'pa1', waId: '+56900050009', nombre: 'Z' }];
+  sinInscripcion = [{ personId: 's1', waId: '+56900050001', nombre: 'A', enviadosSinActividad: 0 }];
+
+  const r = await planificar(LUNES_MEDIODIA);
+  assert.equal(r.programados, 1);
+  assert.equal(r.diferidos, 1);
+  assert.equal([...rms.values()][0].tipo, 'primer_aviso', 'el cupo se lo lleva el mensaje que no cuesta');
 });
 
 test('revalidación al despachar: inscripción completada → cancelado sin enviar', async () => {

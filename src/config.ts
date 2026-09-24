@@ -147,6 +147,13 @@ const Env = z.object({
   /** Tope de recordatorios sin nueva actividad del estudiante (luego se deja de insistir). */
   REMINDER_MAX_SIN_ACTIVIDAD: z.coerce.number().int().positive().default(3),
   /**
+   * Tope de recordatorios NUEVOS por corrida. El tope de arriba es por persona; este es por tanda,
+   * y existe porque son cosas distintas: tras una pausa larga el backlog acumulado se planificaba
+   * entero de una vez (83 plantillas en un minuto, 24-09-2026), que es el patrón que Meta penaliza
+   * en un número recién registrado. Lo que excede se difiere a la corrida siguiente, no se pierde.
+   */
+  REMINDER_MAX_POR_CORRIDA: z.coerce.number().int().positive().default(25),
+  /**
    * Horas de inactividad para el PRIMER aviso, que va dentro de la ventana de servicio de 24 h y
    * por lo tanto es gratis. Tiene que ser < 24: pasada la ventana ya no hay texto libre y el aviso
    * costaría una plantilla, que es justo lo que este umbral evita.
@@ -322,6 +329,7 @@ export const config = {
   waTemplateLang: env.WA_TEMPLATE_LANG,
   reminderDiasInactividad: env.REMINDER_DIAS_INACTIVIDAD,
   reminderMaxSinActividad: env.REMINDER_MAX_SIN_ACTIVIDAD,
+  reminderMaxPorCorrida: env.REMINDER_MAX_POR_CORRIDA,
   reminderHorasPrimerAviso: env.REMINDER_HORAS_PRIMER_AVISO,
   inscripcionDiasVigencia: env.INSCRIPCION_DIAS_VIGENCIA,
 
