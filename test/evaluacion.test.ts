@@ -87,6 +87,14 @@ mock.module('../src/store/evaluaciones.ts', {
   },
 });
 
+// Captura de audit(): antes de la revisión F16 este flujo tenía un camino —la respuesta que no
+// calza con ninguna opción— que no llamaba a audit() en absoluto. Un caso real quedó repitiendo
+// la misma pregunta tres veces en dos horas sin que ESTO dejara ningún rastro en ninguna parte.
+let auditados: { type: string; detail?: any }[] = [];
+mock.module('../src/obs/audit.ts', {
+  namedExports: { audit: async (e: any) => { auditados.push(e); } },
+});
+
 const { manejarEvaluacion, marcarQuizPendiente, iniciarQuizPendiente, tomarQuizPendiente, mapearRespuestaAOpcion } = await import('../src/flows/evaluacion');
 import type { InboundMessage, MessagingProvider, SendResult } from '../src/messaging/types';
 
@@ -196,6 +204,77 @@ test('reintento, re-guía ante texto no reconocido y salida con pausa', async ()
   assert.match(textos.at(-1)!, /pausamos/i);
   r = await manejarEvaluacion(texto(from, 'una duda del curso'), PERSONA as any, p);
   assert.equal(r.handled, false);
+});
+
+// ── Caso real (F16): dos horas repitiendo la misma pregunta sin que nada lo mostrara ──────────────
+//
+// Encontrado por una captura de WhatsApp: alguien recibió "Estamos en la pregunta 1 de 4..." tres
+// veces en dos horas y nunca avanzó. audit_log no tenía UN SOLO evento en toda esa ventana — el
+// camino de "no reconocí tu respuesta" no auditaba nada, así que no había forma de saberlo sin la
+// captura. Y sin límite, la persona quedaba repitiendo lo mismo hasta que el estado expiraba solo
+// a las 2 horas (TTL).
+
+test('cada respuesta que no calza queda auditada, aunque sea la primera vez', async () => {
+  const { p } = fakeProvider();
+  const from = '+56900040010';
+  auditados = [];
+
+  await manejarEvaluacion(texto(from, 'quiz'), PERSONA as any, p);
+  await manejarEvaluacion(texto(from, 'no entiendo la pregunta'), PERSONA as any, p);
+
+  const evento = auditados.find((a) => a.type === 'respuesta_no_reconocida');
+  assert.ok(evento, 'el primer intento fallido YA queda registrado, no solo el segundo');
+  assert.equal(evento!.detail.intentos, 1);
+  assert.equal(evento!.detail.tipoMsg, 'text');
+  assert.equal(typeof evento!.detail.inLen, 'number', 'el largo sí, el texto en sí nunca');
+  assert.equal(evento!.detail.pregunta, 1);
+});
+
+test('al segundo intento seguido sin calzar, se deja de insistir: pausa y el mensaje sigue al tutor', async () => {
+  const { p, textos, listas } = fakeProvider();
+  const from = '+56900040011';
+  auditados = [];
+
+  await manejarEvaluacion(texto(from, 'quiz'), PERSONA as any, p);
+  const listasAntes = listas.length;
+
+  // Primer intento sin calzar: re-guía y reenvía, como siempre.
+  let r = await manejarEvaluacion(texto(from, 'trabajo en ventas'), PERSONA as any, p);
+  assert.equal(r.handled, true);
+  assert.equal(listas.length, listasAntes + 1, 'reenvió la pregunta la primera vez');
+
+  // Segundo intento seguido, tampoco calza: ACÁ es donde el caso real se quedaba dos horas.
+  // Ahora pausa en vez de insistir una tercera vez con el mismo texto.
+  r = await manejarEvaluacion(texto(from, 'sigo sin entender'), PERSONA as any, p);
+  assert.equal(r.handled, false, 'no se traga el mensaje: sigue al tutor');
+  assert.equal(listas.length, listasAntes + 1, 'NO reenvía la pregunta una tercera vez');
+  assert.match(textos.at(-1)!, /vamos a dejarlo por ahora/i);
+  assert.match(textos.at(-1)!, /\*quiz\*/, 'dice cómo retomar');
+
+  const segundo = auditados.filter((a) => a.type === 'respuesta_no_reconocida').at(-1)!;
+  assert.equal(segundo.detail.intentos, 2);
+
+  // Se puede retomar: el quiz vuelve a ofrecerse con "quiz".
+  r = await manejarEvaluacion(texto(from, 'quiz'), PERSONA as any, p);
+  assert.equal(r.handled, true);
+  assert.match(textos.at(-1)!, /Lo intento|pregunta/i);
+});
+
+test('una respuesta VÁLIDA (aunque sea incorrecta) resetea el contador: no arrastra el fallo previo', async () => {
+  const { p } = fakeProvider();
+  const from = '+56900040012';
+  auditados = [];
+
+  await manejarEvaluacion(texto(from, 'quiz'), PERSONA as any, p);
+  await manejarEvaluacion(texto(from, 'no sé qué poner'), PERSONA as any, p); // 1 intento sin calzar
+
+  // Responde MAL pero de forma VÁLIDA (letra reconocible) → cuenta como respuesta, no como fallo.
+  await manejarEvaluacion(texto(from, 'a'), PERSONA as any, p); // o1a es incorrecta
+
+  // Ahora dos intentos sin calzar seguidos seguirían siendo solo el primer strike, no el segundo:
+  // si el contador no se hubiera reiniciado, este ya sería el "segundo" y pausaría de una.
+  const r = await manejarEvaluacion(texto(from, 'mmm'), PERSONA as any, p);
+  assert.equal(r.handled, true, 'todavía re-guía: el fallo anterior a la respuesta válida no cuenta');
 });
 
 // ── Quiz AUTOMÁTICO ─────────────────────────────────────────────────────────────────────────────

@@ -49,6 +49,12 @@ type EstadoEvaluacion = {
   respondidos?: number;
   /** Este ítem ya tuvo su revisión sin penalización: la próxima respuesta cierra y avanza. */
   reintentado?: boolean;
+  /** Mensajes seguidos que NO se pudieron leer como una respuesta (ni botón, ni letra, ni V/F).
+   *  Revisión F16: sin este contador, alguien atascado —el mensaje no calzaba con ninguna
+   *  opción, por el motivo que fuera— recibía el mismo recordatorio otra vez, indefinidamente,
+   *  hasta que el estado expiraba solo a las 2 h (ver TTL). Encontrado con un caso real:
+   *  2 horas de la misma pregunta repetida tres veces, sin que nada lo señalara en ningún lado. */
+  sinReconocer?: number;
   /** Microcápsula de la que nació la práctica. La 2 (DEFINO) ofrece después su campo personal. */
   leccionId?: string;
   pasoRuta?: string | null;
@@ -189,6 +195,32 @@ export async function manejarEvaluacion(
     }
     const optionId = mapearRespuestaAOpcion(msg, estado.pregunta);
     if (!optionId) {
+      // Auditado SIEMPRE, se resuelva como sea: antes este camino no dejaba ningún rastro, así que
+      // alguien podía quedar repitiendo la misma pregunta durante horas sin que nada —ni un
+      // contador, ni un log— lo mostrara en ninguna parte. El texto en sí NO se guarda (igual que
+      // el resto del proyecto): solo el tipo de mensaje y su largo, que ya bastan para saber si la
+      // persona escribía texto libre o tocaba un botón viejo.
+      const intentos = (estado.sinReconocer ?? 0) + 1;
+      void audit({
+        type: 'respuesta_no_reconocida', dialogId: waId,
+        detail: { quiz: estado.quizId, pregunta: estado.pregunta.orden, intentos, tipoMsg: msg.type, inLen: textoDe(msg).length },
+      });
+
+      // Al segundo intento seguido sin calzar, se deja de insistir con lo mismo: pausar y dejar
+      // que el mensaje siga al tutor es mejor que un tercer recordatorio idéntico. La persona
+      // retoma cuando quiera escribiendo *quiz* — mismo patrón que capturarCampo() en registro.ts
+      // para un dato que no valida dos veces seguidas.
+      if (intentos >= 2) {
+        await kvDel(KEY(waId));
+        await provider.enviarTexto(
+          waId,
+          'Vamos a dejarlo por ahora 🙂 Cuéntame igual qué necesitas, y cuando quieras retomar el mini-quiz escribe *quiz*.',
+        );
+        return { handled: false };
+      }
+
+      await setJson(KEY(waId), { ...estado, sinReconocer: intentos }, TTL);
+
       // La afordancia real depende de cuántas opciones haya y de cuánto midan: prometer "botones"
       // cuando llegó una lista manda a la persona a buscar algo que no está en su pantalla.
       const conBotones = estado.pregunta.opciones.length <= 3
@@ -223,7 +255,10 @@ export async function manejarEvaluacion(
     // penalización; la alternativa correcta se muestra recién después de esa segunda vuelta. Una
     // sola revisión por ítem: dos ya sería adivinar por descarte, y nadie queda atrapado.
     if (!r.sinRespuestaCorrecta && !r.esCorrecta && !estado.reintentado) {
-      await setJson(KEY(waId), { ...estado, reintentado: true, enviadaEn: Date.now() }, TTL);
+      // sinReconocer en 0: si llegó hasta acá es porque la respuesta SÍ se entendió —solo estaba
+      // equivocada—, así que la persona demostró que sabe usar la afordancia y se le da margen
+      // completo de nuevo para esta segunda vuelta.
+      await setJson(KEY(waId), { ...estado, reintentado: true, enviadaEn: Date.now(), sinReconocer: 0 }, TTL);
       await provider.enviarTexto(waId, 'Revisémoslo juntos 🤔 Esa no es la que mejor calza. No pasa nada: mira otra vez las alternativas y elige la que te parezca.');
       await enviarPregunta(waId, provider, estado.pregunta, `${estado.pregunta.orden} de ${cuantosItems}`);
       void audit({ type: 'refuerzo_evaluacion', dialogId: waId, detail: { quiz: estado.quizId, pregunta: estado.pregunta.orden } });
@@ -281,7 +316,9 @@ export async function manejarEvaluacion(
       return { handled: true };
     }
 
-    await setJson(KEY(waId), { ...estado, pregunta: r.siguiente, enviadaEn: Date.now(), respondidos, reintentado: false }, TTL);
+    // sinReconocer también se reinicia: es por pregunta, no acumulado del quiz completo — dos
+    // intentos fallidos en la pregunta 1 no deberían dejar a la persona sin margen en la 2.
+    await setJson(KEY(waId), { ...estado, pregunta: r.siguiente, enviadaEn: Date.now(), respondidos, reintentado: false, sinReconocer: 0 }, TTL);
     await enviarPregunta(waId, provider, r.siguiente, `${r.siguiente.orden} de ${Math.min(minimo, estado.total)}`);
     return { handled: true };
   }

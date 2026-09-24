@@ -18,6 +18,7 @@ scripts
 !scripts/verificar-herramienta.mjs
 !scripts/verificar-rag.mjs
 !scripts/verificar-busqueda-rag.ts
+!scripts/verificar-persona-auditoria.mjs
 docs
 *.md
 .github
