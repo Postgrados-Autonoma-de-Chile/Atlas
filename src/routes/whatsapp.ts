@@ -23,7 +23,7 @@ import { manejarEvaluacion, iniciarQuizPendiente } from '../flows/evaluacion';
 import { manejarNotaPersonal } from '../flows/notaPersonal';
 import { manejarCertificacion } from '../flows/certificacion';
 import { contextoAcademico } from '../store/cursos';
-import { registrarOptOut, registrarOptIn } from '../store/personas';
+import { registrarOptOut, registrarOptIn, estaExcluido } from '../store/personas';
 import { cancelarDePersona, marcarFallidoPorWamid } from '../store/recordatorios';
 import { esOptOutRecordatorios, esOptInRecordatorios } from '../reminders/motor';
 import { setJson } from '../store/kv';
@@ -239,6 +239,20 @@ export async function procesarMensajeEntrante(msg: InboundMessage, provider: Mes
   // ficha. Acá se intercepta antes de que cualquier flujo la consuma.
   const bienestar = await manejarBienestar(msg, provider);
   if (bienestar.handled) return;
+
+  // Personas excluidas: ATLAS no les escribe ni les responde.
+  //
+  // Va DESPUÉS de bienestar a propósito. La exclusión se decide por un motivo de canal —no pisar una
+  // gestión comercial en curso—, y ese motivo no alcanza para callar ante una señal de riesgo vital:
+  // atender eso no interfiere con ninguna venta. Todo lo demás sí queda en silencio.
+  //
+  // Silencio real, sin acuse: cualquier respuesta, aunque fuera "no puedo atenderte", reabre la
+  // conversación que la exclusión busca cerrar. Meta ya recibió su 200; queda rastro para saber que
+  // pasó.
+  if (await estaExcluido(msg.from)) {
+    inc('inbound:excluido');
+    return log.info('whatsapp: mensaje de persona excluida, ignorado', { waMessageId: msg.waMessageId });
+  }
 
   // Registro de identidad (F3): asistente determinista para usuarios sin Persona. Si consume el
   // mensaje (pregunta/valida/persiste), el motor no corre. Sin BD (dev) se omite limpiamente.

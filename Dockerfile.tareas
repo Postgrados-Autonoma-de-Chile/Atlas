@@ -34,6 +34,7 @@ COPY scripts/verificar-herramienta.mjs ./scripts/verificar-herramienta.mjs
 COPY scripts/verificar-rag.mjs ./scripts/verificar-rag.mjs
 COPY scripts/verificar-busqueda-rag.ts ./scripts/verificar-busqueda-rag.ts
 COPY scripts/verificar-persona-auditoria.mjs ./scripts/verificar-persona-auditoria.mjs
+COPY scripts/excluir-bitrix24-2026-09-24.mjs ./scripts/excluir-bitrix24-2026-09-24.mjs
 
 # La ingesta al RAG sí necesita el código: reutiliza el chunker y el cliente de embeddings del
 # servicio en vez de duplicarlos, que es lo que hay que evitar en un corpus que debe quedar

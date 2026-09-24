@@ -19,6 +19,7 @@ scripts
 !scripts/verificar-rag.mjs
 !scripts/verificar-busqueda-rag.ts
 !scripts/verificar-persona-auditoria.mjs
+!scripts/excluir-bitrix24-2026-09-24.mjs
 docs
 *.md
 .github

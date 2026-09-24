@@ -46,6 +46,7 @@ export async function candidatosContinuarCurso(diasInactividad: number): Promise
        JOIN person p ON p.id = ua.person_id
        JOIN person_identity pi ON pi.person_id = ua.person_id AND pi.tipo = 'wa_id'
        WHERE ua.ultima < now() - ($1 || ' days')::interval
+         AND p.excluido_at IS NULL
          -- Espaciado REAL (revisión F9.1): nada pendiente ni enviado en los últimos N días —
          -- la clave_dedupe por bloques de epoch permitía dos envíos cercanos en el borde de bloque.
          AND NOT EXISTS (
@@ -106,6 +107,9 @@ export async function pendientesDeDespacho(limit: number): Promise<RecordatorioP
        JOIN person p ON p.id = rm.person_id
        JOIN person_identity pi ON pi.person_id = rm.person_id AND pi.tipo = 'wa_id'
        WHERE rm.estado = 'programado' AND rm.programado_para <= now()
+         -- Última compuerta antes de la red: cubre lo que se programó ANTES de que la persona
+         -- quedara excluida, sin depender de haber cancelado esas filas una por una.
+         AND p.excluido_at IS NULL
        ORDER BY rm.programado_para LIMIT $1`,
       [limit],
     );
@@ -272,6 +276,7 @@ export async function candidatosSinInscripcion(diasInactividad: number): Promise
          JOIN person p ON p.id = s.person_id
          JOIN person_identity pi ON pi.person_id = s.person_id AND pi.tipo='wa_id'
         WHERE s.ultima < now() - ($1 || ' days')::interval
+          AND p.excluido_at IS NULL
           -- Sin inscripción ACTIVA en el curso ACTIVO: si ya está cursando, le corresponde el otro
           -- recordatorio y no este.
           AND NOT EXISTS (
@@ -341,6 +346,7 @@ export async function candidatosPrimerAviso(horasInactividad: number): Promise<C
        JOIN person p ON p.id = ua.person_id
        JOIN person_identity pi ON pi.person_id = ua.person_id AND pi.tipo = 'wa_id'
        WHERE ua.ultima < now() - ($1 || ' hours')::interval
+         AND p.excluido_at IS NULL
          -- Uno solo por episodio: si ya se le envió después de su última actividad, no va otro.
          AND NOT EXISTS (
            SELECT 1 FROM reminder rm2
