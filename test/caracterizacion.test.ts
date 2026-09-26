@@ -216,3 +216,40 @@ test('una respuesta no reconocida repregunta sin perder el avance', async () => 
   assert.match(textos.at(-1)!, /No pude identificar/);
   assert.equal(respuestas.size, 0, 'no se guardó nada equivocado');
 });
+
+// ── Tolerancia a dedazos ────────────────────────────────────────────────────
+// Reportado desde producción: una persona pidió el cuestionario, no se le reconoció la palabra y
+// quedó atascada. No era un detalle cosmético: al no disparar el flujo, el turno caía al tutor,
+// cuyas tools están bloqueadas hasta completar el cuestionario. No había salida por ningún lado.
+
+test('el cuestionario arranca aunque la palabra venga con un dedazo', async () => {
+  for (const t of ['quiero el cuestionaro', 'CUESTIONARIO', 'dale con la encusta']) {
+    reset();
+    const { p, textos } = fakeProvider();
+    const r = await manejarCaracterizacion(texto(t), PERSONA, p);
+    assert.equal(r.handled, true, `deberia arrancar con: ${t}`);
+    assert.match(textos[0], /3 preguntas/);
+  }
+});
+
+test('un dedazo NO convierte un saludo en una solicitud de cuestionario', async () => {
+  // El otro lado del filo: si la tolerancia fuera laxa, no habría forma de conversar con el tutor.
+  reset();
+  const { p } = fakeProvider();
+  const r = await manejarCaracterizacion(texto('hola, cuanto dura el programa'), PERSONA, p);
+  assert.equal(r.handled, false);
+});
+
+test('al no reconocer la respuesta, vuelve a MOSTRAR las alternativas', async () => {
+  // Antes solo decía "elige una de las alternativas". Quien ya no las tenía a la vista —scroll,
+  // o un rato después— se quedaba sin salida. El número siempre funciona, aunque falle el texto.
+  reset();
+  const { p, textos } = fakeProvider();
+  await manejarCaracterizacion(texto('cuestionario'), PERSONA, p);
+  await manejarCaracterizacion(texto('no entiendo nada'), PERSONA, p);
+  const ultimo = textos.at(-1)!;
+  assert.match(ultimo, /No pude identificar/);
+  assert.match(ultimo, /1\. 28–37 años/, 'lista las alternativas, numeradas');
+  assert.match(ultimo, /Responde con el número/);
+  assert.equal(respuestas.size, 0, 'y no guarda nada equivocado');
+});

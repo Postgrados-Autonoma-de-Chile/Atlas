@@ -8,6 +8,7 @@ import { inscribir, cursoActivo } from '../store/cursos';
 import { audit } from '../obs/audit';
 import type { InboundMessage, MessagingProvider } from '../messaging/types';
 import type { Persona } from '../store/personas';
+import { plano, mencionaAlguna, elegirPorTexto } from '../core/coincidencia';
 
 // Flujo DETERMINISTA del cuestionario de caracterización (11 preguntas), primer paso de la
 // experiencia según el plan curricular oficial.
@@ -31,12 +32,21 @@ type EstadoCaracterizacion = {
 const KEY = (waId: string) => `caracterizacion:${waId}`;
 const TTL = 7 * 24 * 3600; // una semana: el plan no exige responder de una sola vez
 
-const plano = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
 const textoDe = (m: InboundMessage) =>
   (m.type === 'text' ? m.text ?? '' : m.type === 'interactive' ? m.interactiveReplyTitle ?? '' : '').trim();
 
 const RE_PAUSA = /\b(salir|pausa(r)?|despues|luego|mas tarde)\b/;
 const RE_INICIAR = /\b(cuestionario|caracterizacion|encuesta|empezar|comenzar|partir|inscribirme|curso)\b/;
+
+// Las mismas palabras, para una segunda pasada tolerante a dedazos. La expresión exacta sigue
+// siendo el camino rápido: esto solo atiende lo que ANTES no encontraba y dejaba a la persona
+// atascada — al no disparar, el mensaje caía al tutor, cuyas tools están bloqueadas hasta que el
+// cuestionario esté completo, así que no había salida. Un "cuestionaro" costaba la conversación.
+const PALABRAS_INICIAR = ['cuestionario', 'caracterizacion', 'encuesta', 'empezar', 'comenzar', 'inscribirme'];
+const PALABRAS_PAUSA = ['salir', 'pausar', 'despues', 'luego'];
+
+const quiereIniciar = (t: string) => RE_INICIAR.test(t) || mencionaAlguna(t, PALABRAS_INICIAR);
+const quierePausar = (t: string) => RE_PAUSA.test(t) || mencionaAlguna(t, PALABRAS_PAUSA);
 
 /**
  * Introducción TEXTUAL del cuestionario oficial. Se transcribe literal —incluida la declaración
@@ -80,8 +90,12 @@ const T = {
   pausada: (hechas: number, total: number) =>
     `Sin problema, dejamos el cuestionario en la pregunta ${hechas + 1} de ${total} 🙂 ` +
     `Cuando quieras seguir, escribe *cuestionario*.`,
-  noEntendi: (n: number) =>
-    `No pude identificar tu respuesta 🤔 Elige una de las alternativas ${n > MAX_LISTA ? 'escribiendo su número' : 'con los botones'}.`,
+  // Volver a MOSTRAR las alternativas: repetir "elige una" sin listarlas deja sin salida a
+  // quien ya no las tiene a la vista. El número siempre funciona, aunque falle el texto.
+  noEntendi: (opciones: { texto: string }[]) =>
+    'No pude identificar tu respuesta 🤔 Estas son las alternativas:\n\n' +
+    opciones.map((o, i) => `${i + 1}. ${o.texto}`).join('\n') +
+    '\n\n_Responde con el número._',
   bloqueada: (faltan: number) =>
     `Para partir con el curso me falta terminar el cuestionario: quedan ${faltan} pregunta${faltan > 1 ? 's' : ''} 📋 ` +
     `Escribe *cuestionario* y las vemos rápido.`,
@@ -143,7 +157,10 @@ export function interpretarRespuesta(
   const exacta = opciones.find((o) => plano(o.texto) === p);
   if (exacta) return exacta.id;
   const empieza = opciones.filter((o) => plano(o.texto).startsWith(p) && p.length >= 4);
-  return empieza.length === 1 ? empieza[0].id : null;
+  if (empieza.length === 1) return empieza[0].id;
+  // Última pasada, tolerante a dedazos. Exige una ganadora clara: ante un empate prefiere no
+  // entender antes que registrar un dato equivocado — esto alimenta una caracterización.
+  return elegirPorTexto(t, opciones);
 }
 
 export type ResultadoCaracterizacion = { handled: boolean };
@@ -162,7 +179,7 @@ export async function manejarCaracterizacion(
 
   // ── Cuestionario en curso ─────────────────────────────────────────────────
   if (estado) {
-    if (RE_PAUSA.test(texto)) {
+    if (quierePausar(texto)) {
       await kvDel(KEY(waId));
       const [hechas, total] = await Promise.all([respondidas(persona.id), totalPreguntas()]);
       await provider.enviarTexto(waId, T.pausada(hechas, total));
@@ -170,7 +187,7 @@ export async function manejarCaracterizacion(
     }
     const optionId = interpretarRespuesta(msg, estado.opciones);
     if (!optionId) {
-      await provider.enviarTexto(waId, T.noEntendi(estado.opciones.length));
+      await provider.enviarTexto(waId, T.noEntendi(estado.opciones));
       return { handled: true };
     }
     const ok = await guardarRespuesta(persona.id, estado.questionId, optionId);
@@ -188,7 +205,7 @@ export async function manejarCaracterizacion(
   // completado: el plan lo define como requisito previo.
   const yaCompleta = await cerrarSiCompleta(persona.id);
   if (yaCompleta) return { handled: false };
-  if (!RE_INICIAR.test(texto)) return { handled: false };
+  if (!quiereIniciar(texto)) return { handled: false };
   return continuar(waId, persona, provider, true);
 }
 
