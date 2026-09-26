@@ -1,8 +1,10 @@
-import { getJson, setJson, kvDel } from '../store/kv';
+import { getJson, setJson, kvDel, kvVivo } from '../store/kv';
 import { dbEnabled } from '../store/db';
 import { buscarPersonaPorWaId, crearPersonaRegistrada, type Persona } from '../store/personas';
 import { cursoActivo } from '../store/cursos';
-import { validarNombre, validarEmail, normalizarEmail, capitalizar } from '../core/identidad';
+import {
+  validarNombre, validarEmail, normalizarEmail, capitalizar, quitarRepetidoDeNombre,
+} from '../core/identidad';
 import { audit } from '../obs/audit';
 import { log } from '../log';
 import type { InboundMessage, MessagingProvider } from '../messaging/types';
@@ -44,9 +46,9 @@ const T = {
   rechazo:
     'Sin problema 🙂 Cuando quieras registrarte, escríbeme "quiero registrarme". Igual puedo responder tus preguntas generales.',
   nombre: '¡Gracias! Partamos: ¿cuál es tu *nombre*? (solo el nombre)',
-  nombreInvalido: 'Mmm, eso no parece un nombre 🙂 ¿Me lo escribes de nuevo? (solo tu nombre, sin números)',
+  nombreInvalido: 'Mmm, eso no parece un nombre 🙂 ¿Me lo escribes de nuevo? (solo tu nombre, sin nada más)',
   apellido: (nombre: string) => `Un gusto, ${nombre} 👋 ¿Cuál es tu *apellido*?`,
-  apellidoInvalido: 'Ese apellido no me calza 🙂 ¿Me lo repites? (solo el apellido, sin números)',
+  apellidoInvalido: 'Ese apellido no me calza 🙂 ¿Me lo repites? (solo el apellido, sin repetir tu nombre)',
   email: 'Perfecto. Ahora tu *correo electrónico* (ahí llegará tu certificado al finalizar):',
   emailInvalido: 'Ese correo no parece válido 🤔 Revísalo y escríbelo de nuevo (ej: nombre@dominio.cl):',
   pausa: 'No hay problema, sigamos conversando y retomamos tu registro después 🙂',
@@ -62,8 +64,26 @@ const T = {
     `¡Listo, ${nombre}! ✅ Quedaste registrado.\n\nCuando haya un curso disponible te aviso por aquí. Mientras tanto, puedes preguntarme lo que necesites.`,
 };
 
-async function getEstado(waId: string): Promise<EstadoRegistro | null> {
-  return (await getJson<EstadoRegistro>(KEY(waId))) ?? null;
+/**
+ * Lee el estado del asistente, distinguiendo "esta persona no tiene uno" de "no se pudo leer".
+ *
+ * `getJson` colapsa las dos cosas en `null` (KV falla abierto a propósito para rate-limit y
+ * locks, donde un fallo transitorio no debe bloquear). Acá SÍ importa la diferencia: un `null`
+ * dispara "primer contacto" y reenvía el consentimiento. Si Redis está caído, TODO el mundo —
+ * gente nueva y gente a mitad de registro— lee `null`, y el 17-21 de septiembre eso mandó ~500
+ * consentimientos repetidos durante los 4 días que `atlas-redis` estuvo apagada.
+ *
+ * `undefined` = no se pudo verificar (no tratar como primer contacto). `null` = de verdad no hay
+ * estado. Mismo criterio que `buscarPersonaPorWaId` ya usa para la BD (revisión F9.1).
+ */
+async function getEstado(waId: string): Promise<EstadoRegistro | null | undefined> {
+  const estado = await getJson<EstadoRegistro>(KEY(waId));
+  if (estado) return estado;
+  // Sin fila: puede ser una persona nueva (kv sano) o Redis inalcanzable (todas lo parecen).
+  // kvKind no sirve para esto — se fija al construir el cliente, no reacciona a una caída
+  // posterior — así que se comprueba con un PING real.
+  if (!(await kvVivo())) return undefined;
+  return null;
 }
 async function setEstado(waId: string, e: EstadoRegistro): Promise<void> {
   await setJson(KEY(waId), e, TTL);
@@ -92,7 +112,16 @@ export async function manejarRegistro(msg: InboundMessage, provider: MessagingPr
   if (persona === undefined) return { handled: false, persona: null };
   if (persona) return { handled: false, persona };
 
-  const estado = (await getEstado(msg.from)) ?? { etapa: 'consentimiento' as Etapa, intentos: -1 };
+  const estadoCrudo = await getEstado(msg.from);
+  // undefined = no se pudo leer el estado (Redis caído, no "persona nueva"). Reiniciar el flujo
+  // acá es exactamente el bug del 17-21 de septiembre: cada mensaje se veía como primer contacto
+  // y el consentimiento se reenviaba sin parar, a quien fuera. Fail-closed: no responder y dejar
+  // que el mensaje siga sin este asistente hasta que el estado vuelva a ser legible.
+  if (estadoCrudo === undefined) {
+    log.warn('registro: KV no disponible, no se reinicia el flujo (fail-closed)', { waId: msg.from });
+    return { handled: false, persona: null };
+  }
+  const estado = estadoCrudo ?? { etapa: 'consentimiento' as Etapa, intentos: -1 };
   const replyId = msg.type === 'interactive' ? msg.interactiveReplyId ?? '' : '';
   const texto = textoDe(msg);
 
@@ -151,15 +180,19 @@ export async function manejarRegistro(msg: InboundMessage, provider: MessagingPr
         invalido: T.nombreInvalido,
       });
 
-    case 'apellido':
+    case 'apellido': {
+      // Si la persona ya dio el nombre completo (con apellidos) en el paso anterior y ahora
+      // repite el apellido, no se guarda duplicado: ver quitarRepetidoDeNombre().
+      const limpio = (v: string) => quitarRepetidoDeNombre(estado.nombre ?? '', v);
       return capturarCampo(msg, provider, estado, {
-        valida: validarNombre,
+        valida: (v) => validarNombre(limpio(v)),
         alValido: async (v) => {
-          await setEstado(msg.from, { ...estado, etapa: 'email', apellido: capitalizar(v), intentos: 0 });
+          await setEstado(msg.from, { ...estado, etapa: 'email', apellido: capitalizar(limpio(v)), intentos: 0 });
           await provider.enviarTexto(msg.from, T.email);
         },
         invalido: T.apellidoInvalido,
       });
+    }
 
     case 'email':
       return capturarCampo(msg, provider, estado, {
@@ -192,6 +225,19 @@ export async function manejarRegistro(msg: InboundMessage, provider: MessagingPr
           return { handled: true };
         }
         await kvDel(KEY(msg.from));
+
+        // La memoria conversacional se BORRA al crear una persona nueva en este número.
+        //
+        // El esquema promete que un número reciclado no mezcla estudiantes: la Persona es la
+        // identidad lógica y el teléfono solo una identidad vinculada (ver migración 0002). Pero la
+        // memoria del tutor vive bajo el waId, así que sin esto la persona nueva hereda la
+        // conversación de la anterior — un error de correctitud y una fuga de datos de un tercero.
+        //
+        // También cierra el caso que lo destapó: alguien suprimido que vuelve a registrarse
+        // arrastraba el hilo viejo, y el tutor siguió media hora preguntando por un quiz que había
+        // prometido antes de que su ficha se borrara.
+        await kvDel(`mem:${msg.from}`);
+
         // Si hay curso activo se ofrece empezar de inmediato; si no, se promete el aviso. Consultar
         // acá evita el cierre muerto de la Fase 3, cuando los cursos aún no existían.
         const curso = await cursoActivo().catch(() => null);

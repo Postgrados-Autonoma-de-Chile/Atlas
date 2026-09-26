@@ -1,0 +1,15 @@
+# Construye la imagen de tareas de base de datos (Dockerfile.tareas).
+#   gcloud builds submit --config cloudbuild.tareas.yaml --substitutions=_TAG=v1
+#
+# Va en su propio archivo porque `gcloud builds submit --tag` solo sabe usar el Dockerfile raíz,
+# que es el del servicio.
+substitutions:
+  _TAG: v1
+  _IMAGEN: us-east1-docker.pkg.dev/postgrados-ua/atlas/atlas-tareas
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ['build', '-f', 'Dockerfile.tareas', '-t', '${_IMAGEN}:${_TAG}', '.']
+images:
+  - '${_IMAGEN}:${_TAG}'
+options:
+  logging: CLOUD_LOGGING_ONLY

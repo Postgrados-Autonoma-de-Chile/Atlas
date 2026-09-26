@@ -32,6 +32,11 @@ mock.module('../src/store/personas.ts', {
 });
 mock.module('../src/store/cursos.ts', {
   namedExports: {
+    reactivarInscripcion: async () => null,
+    expirarInscripciones: async () => 0,
+    // El mock reemplaza el módulo COMPLETO: sin estos dos, el toolRunner no resuelve sus imports.
+    avancePrevioArchivado: async () => null,
+    frasePrevio: () => '',
     cursoActivo: async () => CURSO_TERMINADO.curso,
     inscribir: async () => CURSO_TERMINADO,
     estadoAcademico: async () => CURSO_TERMINADO,

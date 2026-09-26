@@ -10,7 +10,12 @@ import { snapshot, costoEstimadoUsd } from './obs/metrics';
 import { dbResumenNegocio } from './store/metricasNegocio';
 import { kvKind, kvVivo, once } from './store/kv';
 import { verificarPorFolio } from './store/certificados';
-import { requireDashboardToken } from './routes/guard';
+import { requireDashboardToken, requireDireccionToken } from './routes/guard';
+import {
+  panelCohorte, caracterizacionAgregada, caracterizacionPagina, resumenDireccion,
+  pulsoAgente, catalogoPanel, accesosPanel,
+} from './store/panel';
+import { panelCohorteHtml, panelAccesoHtml, caracterizacionHtml, filasDetalleHtml, direccionHtml } from './obs/panelHtml';
 import { rateLimit } from './routes/rateLimit';
 import { planificar, despachar } from './reminders/motor';
 import { messagingProvider } from './messaging';
@@ -118,6 +123,72 @@ app.get('/metrics', requireDashboardToken, async (_req, res) => {
     costoLlmUsd: costoEstimadoUsd(s.counters, config.preciosLlm),
     negocio,
   });
+});
+
+// Panel operativo de la cohorte: quién está, cuánto conversó y cuándo. Detrás del MISMO guard que
+// /metrics, cuyo comentario ya anticipaba "los futuros paneles de tutoría".
+//
+// Lleva nombre y teléfono de personas reales, así que: token por header (nunca por query string, que
+// queda en logs de proxies y en el Referer), noindex, y ninguna ruta pública que lleve acá. El
+// correo y el RUT NO se consultan: van cifrados y el panel no los necesita.
+//
+// Se pide con curl/Invoke-WebRequest y se guarda en disco:
+//   curl -H "x-dashboard-token: TOKEN" https://.../panel/cohorte -o cohorte.html
+// Página de acceso: pública y SIN datos. Existe porque un navegador no puede enviar un header
+// escribiendo una URL, y aceptar el token por query string es lo que este proyecto ya descartó —
+// queda en logs de proxies, en el historial y en el Referer. Acá el token se escribe, vive en
+// sessionStorage y viaja por fetch en el header.
+app.get('/panel', strictLimiter, (_req, res) => {
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  res.setHeader('Cache-Control', 'no-store');
+  res.type('html').send(panelAccesoHtml(config.panelRefrescoSeg));
+});
+
+// Vista de dirección: si el programa funciona, en una pantalla.
+//
+// Es la ÚNICA vista del panel sin datos personales —son todos agregados—, así que es la que se puede
+// proyectar en una reunión sin exponer a nadie. Igual va detrás del token: quién se inscribe y
+// cuántos abandonan tampoco es información pública.
+app.get('/panel/direccion', strictLimiter, requireDireccionToken, async (_req, res) => {
+  // Tres bloques con ritmos distintos —el embudo se mueve en semanas, el pulso en minutos y el
+  // catálogo cuando se recarga el currículo—, así que cada uno trae su propia caché y se piden a
+  // la vez. Si el pulso o el catálogo fallan, la vista se dibuja sin ese bloque en vez de caerse.
+  const [r, pulso, catalogo] = await Promise.all([resumenDireccion(), pulsoAgente(), catalogoPanel()]);
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  res.setHeader('Cache-Control', 'no-store');
+  if (!r) return res.status(503).send('Base de datos no disponible.');
+  res.type('html').send(direccionHtml(r, config.panelClpPorTurno, pulso, catalogo));
+});
+
+// Los datos. El limitador estricto va además del token: es el único endpoint con PII donde alguien
+// podría intentar adivinar el secreto a fuerza de peticiones.
+app.get('/panel/cohorte', strictLimiter, requireDashboardToken, async (req, res) => {
+  const [r, accesos] = await Promise.all([panelCohorte(config.auditRetentionDays), accesosPanel()]);
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  res.setHeader('Cache-Control', 'no-store');
+  if (!r) return res.status(503).send('<!doctype html><meta charset="utf-8">Base de datos no disponible.');
+  res.type('html').send(panelCohorteHtml(r, req.query.vista === 'fragmento', accesos));
+});
+
+// Respuestas del cuestionario de caracterización.
+//
+// Dos consultas con costos muy distintos, y la ruta lo refleja: el AGREGADO se cachea porque
+// recorre toda la tabla, y el DETALLE se pagina por keyset. Con `?cursor=` devuelve SOLO las filas
+// siguientes —sin recalcular el agregado— para que "cargar más" cueste una página y no un informe.
+app.get('/panel/caracterizacion', strictLimiter, requireDashboardToken, async (req, res) => {
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  res.setHeader('Cache-Control', 'no-store');
+  const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : null;
+
+  if (cursor) {
+    const pagina = await caracterizacionPagina(cursor, 50);
+    if (!pagina) return res.status(503).send('Base de datos no disponible.');
+    return res.type('html').send(filasDetalleHtml(pagina, false));
+  }
+
+  const [agregado, pagina] = await Promise.all([caracterizacionAgregada(), caracterizacionPagina(null, 50)]);
+  if (!agregado || !pagina) return res.status(503).send('Base de datos no disponible.');
+  res.type('html').send(caracterizacionHtml(agregado, pagina, false));
 });
 
 // Webhook de WhatsApp Cloud API: GET = handshake de verificación (Meta lo llama al suscribir);

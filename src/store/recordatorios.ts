@@ -46,6 +46,7 @@ export async function candidatosContinuarCurso(diasInactividad: number): Promise
        JOIN person p ON p.id = ua.person_id
        JOIN person_identity pi ON pi.person_id = ua.person_id AND pi.tipo = 'wa_id'
        WHERE ua.ultima < now() - ($1 || ' days')::interval
+         AND p.excluido_at IS NULL
          -- Espaciado REAL (revisión F9.1): nada pendiente ni enviado en los últimos N días —
          -- la clave_dedupe por bloques de epoch permitía dos envíos cercanos en el borde de bloque.
          AND NOT EXISTS (
@@ -106,6 +107,9 @@ export async function pendientesDeDespacho(limit: number): Promise<RecordatorioP
        JOIN person p ON p.id = rm.person_id
        JOIN person_identity pi ON pi.person_id = rm.person_id AND pi.tipo = 'wa_id'
        WHERE rm.estado = 'programado' AND rm.programado_para <= now()
+         -- Última compuerta antes de la red: cubre lo que se programó ANTES de que la persona
+         -- quedara excluida, sin depender de haber cancelado esas filas una por una.
+         AND p.excluido_at IS NULL
        ORDER BY rm.programado_para LIMIT $1`,
       [limit],
     );
@@ -211,5 +215,152 @@ export async function marcarFallidoPorWamid(waMessageId: string): Promise<void> 
     await pool.query(`UPDATE reminder SET estado='fallido' WHERE wa_message_id=$1 AND estado='enviado'`, [waMessageId]);
   } catch (e) {
     log.warn('recordatorios: marcarFallidoPorWamid falló', { err: String(e) });
+  }
+}
+
+export type CandidatoRetomar = CandidatoRecordatorio & {
+  /** Respondió parte del cuestionario y lo dejó a medias: el aviso lo dice y retoma ahí. */
+  caracterizacionParcial: boolean;
+  /** Avanzó en una versión anterior del programa, hoy archivada. */
+  vieneDeVersionAnterior: boolean;
+};
+
+/**
+ * Personas registradas que NO están cursando: el segmento más grande de recuperables.
+ *
+ * El motor original solo miraba a quien tenía inscripción activa en el curso activo, y por eso
+ * dejaba fuera a quien se registró y nunca empezó, a quien abandonó el cuestionario a mitad, y a
+ * quien quedó colgando de un curso archivado tras una actualización del currículo. En el piloto
+ * eran 8 de 21 personas — más que las que estaban cursando.
+ *
+ * El reloj de inactividad acá NO puede ser el avance de lecciones, porque justamente no hay avance.
+ * Se usa la señal más reciente que la persona haya dado: su registro, su última respuesta del
+ * cuestionario, o su último progreso en cualquier curso, incluido uno archivado.
+ */
+export async function candidatosSinInscripcion(diasInactividad: number): Promise<CandidatoRetomar[]> {
+  const pool = getPool();
+  if (!pool) return [];
+  try {
+    const r = await pool.query(
+      `WITH activo AS (
+         SELECT id, nombre FROM course WHERE estado='activo' ORDER BY created_at LIMIT 1
+       ),
+       optin AS (
+         SELECT DISTINCT ON (person_id) person_id, otorgado
+           FROM consent WHERE tipo='recordatorios' ORDER BY person_id, ts DESC
+       ),
+       senal AS (
+         SELECT p.id AS person_id,
+                GREATEST(
+                  p.created_at,
+                  COALESCE((SELECT max(sa.respondido_en) FROM survey_answer sa WHERE sa.person_id = p.id), p.created_at),
+                  COALESCE((SELECT max(GREATEST(lp.entregado_en, lp.completado_en))
+                              FROM lesson_progress lp JOIN enrollment e2 ON e2.id = lp.enrollment_id
+                             WHERE e2.person_id = p.id), p.created_at)
+                ) AS ultima,
+                EXISTS (SELECT 1 FROM survey_answer sa WHERE sa.person_id = p.id) AS respondio_algo,
+                p.caracterizacion_completada_en IS NOT NULL AS cuestionario_ok,
+                EXISTS (SELECT 1 FROM lesson_progress lp JOIN enrollment e3 ON e3.id = lp.enrollment_id
+                         WHERE e3.person_id = p.id AND lp.estado='completada') AS avanzo_antes
+           FROM person p
+       )
+       SELECT s.person_id, pi.valor_lookup AS wa_id, p.nombre,
+              (SELECT nombre FROM activo) AS curso_nombre,
+              (s.respondio_algo AND NOT s.cuestionario_ok) AS caracterizacion_parcial,
+              s.avanzo_antes AS viene_de_version_anterior,
+              (SELECT count(*)::int FROM reminder rm
+                WHERE rm.person_id = s.person_id AND rm.tipo='retomar'
+                  AND rm.estado='enviado' AND rm.enviado_en > s.ultima) AS enviados_sin_actividad
+         FROM senal s
+         JOIN optin o ON o.person_id = s.person_id AND o.otorgado
+         JOIN person p ON p.id = s.person_id
+         JOIN person_identity pi ON pi.person_id = s.person_id AND pi.tipo='wa_id'
+        WHERE s.ultima < now() - ($1 || ' days')::interval
+          AND p.excluido_at IS NULL
+          -- Sin inscripción ACTIVA en el curso ACTIVO: si ya está cursando, le corresponde el otro
+          -- recordatorio y no este.
+          AND NOT EXISTS (
+            SELECT 1 FROM enrollment e
+             WHERE e.person_id = s.person_id AND e.estado='activa'
+               AND e.course_id = (SELECT id FROM activo)
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM reminder rm2
+             WHERE rm2.person_id = s.person_id AND rm2.tipo='retomar'
+               AND (rm2.estado='programado'
+                    OR (rm2.estado='enviado' AND rm2.enviado_en > now() - ($1 || ' days')::interval))
+          )`,
+      [String(diasInactividad)],
+    );
+    return r.rows.map((row: any) => ({
+      personId: row.person_id, waId: row.wa_id, nombre: row.nombre,
+      cursoNombre: row.curso_nombre ?? 'el curso', proximaLeccion: null,
+      enviadosSinActividad: row.enviados_sin_actividad,
+      caracterizacionParcial: Boolean(row.caracterizacion_parcial),
+      vieneDeVersionAnterior: Boolean(row.viene_de_version_anterior),
+    }));
+  } catch (e) {
+    log.warn('recordatorios: candidatosSinInscripcion falló', { err: String(e) });
+    return [];
+  }
+}
+
+/**
+ * Candidatos al PRIMER aviso: inactivos hace pocas horas, todavía dentro de la ventana de 24 h.
+ *
+ * Es el mismo universo que candidatosContinuarCurso pero con el reloj en HORAS, y con su propio
+ * tipo para que tenga su propio dedupe: uno solo por episodio de silencio. Si la persona no
+ * responde, la cadencia de 7 días sigue después con 'continuar_curso'.
+ *
+ * El aviso vale porque es gratis —la ventana la abrió el estudiante— y porque llega el mismo día,
+ * que es cuando retomar todavía es fácil. El despachador NO lo convierte en plantilla si la ventana
+ * ya se cerró: eso lo volvería un gasto, que es exactamente lo que este camino evita.
+ */
+export async function candidatosPrimerAviso(horasInactividad: number): Promise<CandidatoRecordatorio[]> {
+  const pool = getPool();
+  if (!pool) return [];
+  try {
+    const r = await pool.query(
+      `WITH ultima_actividad AS (
+         SELECT e.id AS enrollment_id, e.person_id, c.nombre AS curso_nombre,
+                GREATEST(e.iniciado_en, COALESCE(MAX(lp.entregado_en), e.iniciado_en), COALESCE(MAX(lp.completado_en), e.iniciado_en)) AS ultima
+         FROM enrollment e
+         JOIN course c ON c.id = e.course_id AND c.estado = 'activo'
+         LEFT JOIN lesson_progress lp ON lp.enrollment_id = e.id
+         WHERE e.estado = 'activa'
+         GROUP BY e.id, e.person_id, c.nombre
+       ),
+       optin AS (
+         SELECT DISTINCT ON (person_id) person_id, otorgado
+         FROM consent WHERE tipo = 'recordatorios' ORDER BY person_id, ts DESC
+       )
+       SELECT ua.person_id, pi.valor_lookup AS wa_id, p.nombre, ua.curso_nombre,
+              (SELECT l.titulo FROM lesson l JOIN module m ON m.id = l.module_id
+                JOIN enrollment e2 ON e2.id = ua.enrollment_id AND m.course_id = e2.course_id
+                WHERE NOT EXISTS (SELECT 1 FROM lesson_progress lp2
+                                  WHERE lp2.enrollment_id = ua.enrollment_id AND lp2.lesson_id = l.id AND lp2.estado='completada')
+                ORDER BY m.orden, l.orden LIMIT 1) AS proxima,
+              0 AS enviados_sin_actividad
+       FROM ultima_actividad ua
+       JOIN optin o ON o.person_id = ua.person_id AND o.otorgado
+       JOIN person p ON p.id = ua.person_id
+       JOIN person_identity pi ON pi.person_id = ua.person_id AND pi.tipo = 'wa_id'
+       WHERE ua.ultima < now() - ($1 || ' hours')::interval
+         AND p.excluido_at IS NULL
+         -- Uno solo por episodio: si ya se le envió después de su última actividad, no va otro.
+         AND NOT EXISTS (
+           SELECT 1 FROM reminder rm2
+           WHERE rm2.person_id = ua.person_id AND rm2.tipo = 'primer_aviso'
+             AND (rm2.estado = 'programado' OR (rm2.estado = 'enviado' AND rm2.enviado_en > ua.ultima))
+         )`,
+      [String(horasInactividad)],
+    );
+    return r.rows.map((row: any) => ({
+      personId: row.person_id, waId: row.wa_id, nombre: row.nombre,
+      cursoNombre: row.curso_nombre, proximaLeccion: row.proxima, enviadosSinActividad: 0,
+    }));
+  } catch (e) {
+    log.warn('recordatorios: candidatosPrimerAviso falló', { err: String(e) });
+    return [];
   }
 }
