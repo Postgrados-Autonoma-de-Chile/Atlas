@@ -1,4 +1,5 @@
 import { getPool } from './db';
+import { config } from '../config';
 import { log } from '../log';
 
 // Repositorio de cursos y progreso (Fase 4). Regla de la auditoría: los datos académicos van SIEMPRE
@@ -14,12 +15,40 @@ export type Leccion = {
   duracionMin: number;
   /** Materiales asociados (video/documento) con URL si existen. */
   materiales: { tipo: string; titulo: string | null; url: string | null }[];
+
+  // ── Ficha de diseño de la microcápsula (plan curricular oficial) ──────────
+  /** Paso de la ruta DEFINO → PREGUNTO → ORGANIZO → VERIFICO → DECIDO que trabaja esta cápsula.
+   *  El plan exige que la ruta permanezca visible durante todo el recorrido. */
+  pasoRuta: string | null;
+  proposito: string | null;
+  /** Pregunta con que el documento abre la cápsula ("¿Tengo claro lo que necesito resolver?"). */
+  preguntaMovilizadora: string | null;
+  productoEvidencia: string | null;
+  resultadosObservables: string[];
+  /** Guion del Anfitrión. El plan le da presencia SOLO al inicio y al cierre de cada cápsula:
+   *  humaniza el recorrido sin asumir el rol de profesor. En WhatsApp no hay video, pero el texto
+   *  del guion se entrega igual — es contenido curricular, no una acotación de producción. */
+  guionApertura: string | null;
+  guionCierre: string | null;
+  /** "Me llevo una herramienta" (Plan Nacional §Arquitectura didáctica, momento 5): una regla,
+   *  pauta o fórmula reutilizable, propia de la cápsula — no una narración del Anfitrión. Se
+   *  entrega tal cual, sin parafraseo (ver el prompt en core/channel.ts): acá la palabra exacta
+   *  importa de una forma en que guionApertura/guionCierre no. NULL en cápsulas que no
+   *  introducen una regla nueva (6, que transfiere a casos distintos; 8, que entrega su propio
+   *  producto, la ficha de cierre) — fiel a la fuente, no un hueco. */
+  herramienta: string | null;
 };
 
 export type EstadoAcademico = {
   inscrito: boolean;
   curso?: { id: string; codigo: string; nombre: string; duracionMin: number };
-  enrollment?: { id: string; estado: 'activa' | 'completada' | 'abandonada'; minutosAcumulados: number };
+  enrollment?: {
+    id: string;
+    estado: 'activa' | 'completada' | 'abandonada' | 'vencida';
+    minutosAcumulados: number;
+    /** Fin del cupo. El curso no avanza pasada esa fecha hasta que la persona lo reactive. */
+    venceEn?: Date | null;
+  };
   totalLecciones?: number;
   completadas?: number;
   /** Próxima lección no completada (la actual), si el curso sigue activo. */
@@ -49,10 +78,17 @@ export async function inscribir(personId: string): Promise<EstadoAcademico | nul
   const curso = await cursoActivo();
   if (!curso) return { inscrito: false };
   try {
+    // El cupo tiene plazo, y reinscribirse tras el vencimiento lo REACTIVA conservando el avance:
+    // la persona sigue donde quedó. Solo se toca el estado si estaba vencida — una inscripción
+    // activa no debe renovar su plazo por volver a escribir "quiero inscribirme".
     await pool.query(
-      `INSERT INTO enrollment (person_id, course_id) VALUES ($1,$2)
-       ON CONFLICT ON CONSTRAINT enrollment_unico DO NOTHING`,
-      [personId, curso.id],
+      `INSERT INTO enrollment (person_id, course_id, vence_en)
+       VALUES ($1, $2, now() + ($3 || ' days')::interval)
+       ON CONFLICT ON CONSTRAINT enrollment_unico DO UPDATE
+         SET estado = CASE WHEN enrollment.estado = 'vencida' THEN 'activa' ELSE enrollment.estado END,
+             vence_en = CASE WHEN enrollment.estado = 'vencida'
+                             THEN now() + ($3 || ' days')::interval ELSE enrollment.vence_en END`,
+      [personId, curso.id, String(config.inscripcionDiasVigencia)],
     );
     return estadoAcademico(personId);
   } catch (e) {
@@ -68,7 +104,7 @@ export async function estadoAcademico(personId: string): Promise<EstadoAcademico
   try {
     const r = await pool.query(
       `SELECT c.id AS course_id, c.codigo, c.nombre, c.duracion_min,
-              e.id AS enrollment_id, e.estado, e.minutos_acumulados,
+              e.id AS enrollment_id, e.estado, e.minutos_acumulados, e.vence_en,
               (SELECT count(*)::int FROM lesson l JOIN module m ON m.id = l.module_id WHERE m.course_id = c.id) AS total,
               (SELECT count(*)::int FROM lesson_progress lp WHERE lp.enrollment_id = e.id AND lp.estado='completada') AS completadas
        FROM enrollment e JOIN course c ON c.id = e.course_id
@@ -92,7 +128,10 @@ export async function estadoAcademico(personId: string): Promise<EstadoAcademico
     return {
       inscrito: true,
       curso: { id: row.course_id, codigo: row.codigo, nombre: row.nombre, duracionMin: row.duracion_min },
-      enrollment: { id: row.enrollment_id, estado: row.estado, minutosAcumulados: row.minutos_acumulados },
+      enrollment: {
+        id: row.enrollment_id, estado: row.estado, minutosAcumulados: row.minutos_acumulados,
+        venceEn: row.vence_en ?? null,
+      },
       totalLecciones: row.total,
       completadas: row.completadas,
       proxima: p ? { orden: p.orden, titulo: p.titulo, tipo: p.tipo, duracionMin: p.duracion_min } : undefined,
@@ -112,7 +151,9 @@ export async function entregarLeccionActual(personId: string): Promise<{ leccion
     if (!estado?.inscrito || !estado.enrollment || estado.enrollment.estado !== 'activa') return null;
 
     const r = await pool.query(
-      `SELECT l.id, l.orden, l.titulo, l.descripcion, l.tipo, l.duracion_min
+      `SELECT l.id, l.orden, l.titulo, l.descripcion, l.tipo, l.duracion_min,
+              l.paso_ruta, l.proposito, l.pregunta_movilizadora, l.producto_evidencia,
+              l.resultados_observables, l.guion_apertura, l.guion_cierre, l.herramienta
        FROM lesson l JOIN module m ON m.id = l.module_id
        WHERE m.course_id = $1
          AND NOT EXISTS (SELECT 1 FROM lesson_progress lp
@@ -128,8 +169,14 @@ export async function entregarLeccionActual(personId: string): Promise<{ leccion
        ON CONFLICT ON CONSTRAINT lesson_progress_unico DO NOTHING`,
       [estado.enrollment.id, l.id],
     );
+    // Solo materiales CON enlace. El corpus del RAG se guarda como content_item de tipo
+    // 'material' y sin url —es texto para buscar, no un recurso que se abra—, así que sin este
+    // filtro aparecía en la lista de materiales de la lección y el tutor invitaba a "revisar el
+    // material" señalando algo que el estudiante no puede abrir en ninguna parte.
     const mats = await pool.query(
-      `SELECT tipo, titulo, url FROM content_item WHERE lesson_id = $1 AND tipo IN ('video','documento','material') ORDER BY created_at`,
+      `SELECT tipo, titulo, url FROM content_item
+        WHERE lesson_id = $1 AND tipo IN ('video','documento','material') AND url IS NOT NULL
+        ORDER BY created_at`,
       [l.id],
     );
     return {
@@ -137,6 +184,14 @@ export async function entregarLeccionActual(personId: string): Promise<{ leccion
         id: l.id, orden: l.orden, titulo: l.titulo, descripcion: l.descripcion,
         tipo: l.tipo, duracionMin: l.duracion_min,
         materiales: mats.rows.map((m: any) => ({ tipo: m.tipo, titulo: m.titulo, url: m.url })),
+        pasoRuta: l.paso_ruta ?? null,
+        proposito: l.proposito ?? null,
+        preguntaMovilizadora: l.pregunta_movilizadora ?? null,
+        productoEvidencia: l.producto_evidencia ?? null,
+        resultadosObservables: Array.isArray(l.resultados_observables) ? l.resultados_observables : [],
+        guionApertura: l.guion_apertura ?? null,
+        guionCierre: l.guion_cierre ?? null,
+        herramienta: l.herramienta ?? null,
       },
       posicion: `${l.orden} de ${estado.totalLecciones}`,
     };
@@ -147,7 +202,9 @@ export async function entregarLeccionActual(personId: string): Promise<{ leccion
 }
 
 export type ResultadoCompletar = {
-  completada: { id: string; orden: number; titulo: string };
+  /** pasoRuta permite que el flujo sepa QUÉ microcápsula se cerró sin volver a consultarla: la 2
+   *  (DEFINO) ofrece después el campo personal que su documento define. */
+  completada: { id: string; orden: number; titulo: string; pasoRuta: string | null };
   minutosAcumulados: number;
   cursoCompletado: boolean;
   siguiente?: { orden: number; titulo: string };
@@ -178,7 +235,7 @@ export async function completarLeccionActual(
     if (!enr) { await client.query('ROLLBACK'); return null; }
 
     const l = await client.query(
-      `SELECT l.id, l.orden, l.titulo, l.duracion_min
+      `SELECT l.id, l.orden, l.titulo, l.duracion_min, l.paso_ruta
        FROM lesson l JOIN module m ON m.id = l.module_id
        WHERE m.course_id = $1
          AND NOT EXISTS (SELECT 1 FROM lesson_progress lp
@@ -232,7 +289,7 @@ export async function completarLeccionActual(
     }
     await client.query('COMMIT');
     return {
-      completada: { id: actual.id, orden: actual.orden, titulo: actual.titulo },
+      completada: { id: actual.id, orden: actual.orden, titulo: actual.titulo, pasoRuta: actual.paso_ruta ?? null },
       minutosAcumulados: upd.rows[0].minutos_acumulados,
       cursoCompletado,
       siguiente: siguiente ? { orden: siguiente.orden, titulo: siguiente.titulo } : undefined,
@@ -246,6 +303,76 @@ export async function completarLeccionActual(
   }
 }
 
+/**
+ * Cómo se le cuenta a la persona que su avance anterior no se traslada.
+ *
+ * La instrucción viaja con el dato, no en el prompt del sistema: así el tutor la recibe solo cuando
+ * corresponde y no gasta tokens en cada turno de los demás.
+ */
+export function frasePrevio(p: AvancePrevio): string {
+  const hecho = p.folio
+    ? `ya había COMPLETADO la versión anterior del programa ("${p.curso}") y tiene su certificado ${p.folio}, que sigue siendo válido`
+    : `ya había avanzado ${p.completadas} de ${p.total} microcápsulas en la versión anterior del programa ("${p.curso}")`;
+  return (
+    `CONTEXTO IMPORTANTE: ${hecho}. El programa se actualizó al plan curricular oficial y esta ` +
+    `versión tiene otras microcápsulas, así que ese avance NO se traslada y parte de nuevo. ` +
+    `Reconócelo en UNA frase, con naturalidad, antes de ofrecerle inscribirse: no lo presentes como ` +
+    `un error ni como una pérdida, no te disculpes de más, y NO prometas recuperar ese avance ni ` +
+    `saltarse microcápsulas por haberlas hecho antes.`
+  );
+}
+
+export type AvancePrevio = {
+  curso: string;
+  completadas: number;
+  total: number;
+  /** Folio si alcanzó a certificarse en esa versión. El certificado sigue siendo válido. */
+  folio: string | null;
+};
+
+/**
+ * Avance que la persona alcanzó en una versión ANTERIOR del programa, ya archivada.
+ *
+ * Cuando el currículo se actualiza, los cursos anteriores se archivan y `estadoAcademico` —que solo
+ * mira el curso activo— empieza a devolver `inscrito: false`. Sin este dato, alguien que había
+ * completado tres microcápsulas recibe la bienvenida de un estudiante nuevo, como si su trabajo no
+ * hubiera existido.
+ *
+ * NO devuelve ese avance para trasladarlo: las microcápsulas de una versión y otra no se
+ * corresponden, y darlas por equivalentes falsearía la evidencia. Es solo para poder reconocerlo.
+ *
+ * Devuelve null cuando no hay nada que reconocer: sin microcápsulas completadas y sin certificado,
+ * mencionar una inscripción previa sería ruido.
+ */
+export async function avancePrevioArchivado(personId: string): Promise<AvancePrevio | null> {
+  const pool = getPool();
+  if (!pool) return null;
+  try {
+    const r = await pool.query(
+      `SELECT c.nombre,
+              (SELECT count(*)::int FROM lesson l JOIN module m ON m.id = l.module_id
+                WHERE m.course_id = c.id) AS total,
+              (SELECT count(*)::int FROM lesson_progress lp
+                WHERE lp.enrollment_id = e.id AND lp.estado = 'completada') AS completadas,
+              ct.folio
+         FROM enrollment e
+         JOIN course c ON c.id = e.course_id
+         LEFT JOIN certificate ct ON ct.enrollment_id = e.id AND ct.folio IS NOT NULL
+        WHERE e.person_id = $1 AND c.estado <> 'activo'
+        ORDER BY completadas DESC, e.iniciado_en DESC
+        LIMIT 1`,
+      [personId],
+    );
+    const row = r.rows[0];
+    if (!row) return null;
+    if (!row.completadas && !row.folio) return null;
+    return { curso: row.nombre, completadas: row.completadas, total: row.total, folio: row.folio ?? null };
+  } catch (e) {
+    log.warn('cursos: avancePrevioArchivado falló', { err: String(e) });
+    return null;
+  }
+}
+
 /** Contexto académico compacto para rehidratar al tutor al abrir conversación (sin PII sensible). */
 export async function contextoAcademico(personId: string, nombre: string | null): Promise<string> {
   const estado = await estadoAcademico(personId);
@@ -253,9 +380,10 @@ export async function contextoAcademico(personId: string, nombre: string | null)
   if (!estado) return quien;
   if (!estado.inscrito) {
     const curso = await cursoActivo();
-    return curso
-      ? `${quien} Aún NO está inscrito en el curso disponible ("${curso.nombre}", ${curso.duracionMin} min en microcápsulas). Ofrécele inscribirse con la tool inscribirme_al_curso.`
-      : `${quien} No hay cursos disponibles por ahora.`;
+    if (!curso) return `${quien} No hay cursos disponibles por ahora.`;
+    const previo = await avancePrevioArchivado(personId);
+    const base = `${quien} Aún NO está inscrito en el curso disponible ("${curso.nombre}", ${curso.duracionMin} min en microcápsulas). Ofrécele inscribirse con la tool inscribirme_al_curso.`;
+    return previo ? `${base} ${frasePrevio(previo)}` : base;
   }
   const { curso, enrollment, completadas, totalLecciones, proxima } = estado;
   if (enrollment!.estado === 'completada') {
@@ -263,4 +391,48 @@ export async function contextoAcademico(personId: string, nombre: string | null)
   }
   const prox = proxima ? ` Próxima microcápsula: ${proxima.orden}. "${proxima.titulo}" (~${proxima.duracionMin} min).` : '';
   return `${quien} Curso "${curso!.nombre}": ${completadas}/${totalLecciones} microcápsulas completadas, ${enrollment!.minutosAcumulados} min acumulados.${prox} Si quiere continuar, usa la tool continuar_curso.`;
+}
+
+/**
+ * Vence las inscripciones cuyo plazo se cumplió. Idempotente: el WHERE ya excluye las vencidas.
+ *
+ * No toca el avance. El estudiante conserva sus microcápsulas completadas y puede reactivar el
+ * cupo escribiendo; lo único que se detiene es poder seguir avanzando mientras esté vencida — que
+ * es lo que hace que el plazo signifique algo.
+ */
+export async function expirarInscripciones(): Promise<number> {
+  const pool = getPool();
+  if (!pool) return 0;
+  try {
+    const r = await pool.query(
+      `UPDATE enrollment SET estado='vencida'
+        WHERE estado='activa' AND vence_en IS NOT NULL AND vence_en < now()
+        RETURNING id`,
+    );
+    if (r.rowCount) log.info('cursos: inscripciones vencidas', { n: r.rowCount });
+    return r.rowCount ?? 0;
+  } catch (e) {
+    log.warn('cursos: expirarInscripciones falló', { err: String(e) });
+    return 0;
+  }
+}
+
+/** Vuelve a abrir un cupo vencido, con plazo nuevo y el avance intacto. */
+export async function reactivarInscripcion(personId: string): Promise<{ venceEn: Date } | null> {
+  const pool = getPool();
+  if (!pool) return null;
+  try {
+    const r = await pool.query(
+      `UPDATE enrollment e SET estado='activa', vence_en = now() + ($2 || ' days')::interval
+         FROM course c
+        WHERE c.id = e.course_id AND c.estado='activo'
+          AND e.person_id = $1 AND e.estado='vencida'
+        RETURNING e.vence_en`,
+      [personId, String(config.inscripcionDiasVigencia)],
+    );
+    return r.rows[0] ? { venceEn: r.rows[0].vence_en } : null;
+  } catch (e) {
+    log.warn('cursos: reactivarInscripcion falló', { err: String(e) });
+    return null;
+  }
 }

@@ -1,7 +1,9 @@
 import type { AgentContext } from '../core/channel';
 import { buscarPersonaPorWaId } from '../store/personas';
-import { inscribir, estadoAcademico, entregarLeccionActual, completarLeccionActual, cursoActivo } from '../store/cursos';
+import { inscribir, estadoAcademico, entregarLeccionActual, completarLeccionActual, cursoActivo,
+  avancePrevioArchivado, frasePrevio, reactivarInscripcion } from '../store/cursos';
 import { quizDeLeccion, quizzesPendientes } from '../store/evaluaciones';
+import { estaCompleta, respondidas, totalPreguntas } from '../store/caracterizacion';
 import { marcarQuizPendiente } from '../flows/evaluacion';
 import { buscarContenidoCurso } from '../rag/retrieval';
 import { audit } from '../obs/audit';
@@ -27,6 +29,28 @@ const NO_REGISTRADO = { ok: false, error: 'no_registrado', mensaje: 'El estudian
  * Devuelve un objeto vacío cuando no hay ninguno, para no ensuciar el resultado de la herramienta
  * ni gastar tokens en un cero.
  */
+/**
+ * Verifica el requisito previo del plan curricular: la caracterización va PRIMERO.
+ *
+ * Devuelve null cuando está cumplido. Cuando no, devuelve el resultado que la herramienta debe
+ * entregar en su lugar. El bloqueo vive acá y no en el prompt a propósito: el modelo no debe poder
+ * decidir saltarse un requisito del currículo por complacer a quien insiste.
+ */
+async function faltaCaracterizacion(personId: string): Promise<Record<string, unknown> | null> {
+  if (await estaCompleta(personId)) return null;
+  const [hechas, total] = await Promise.all([respondidas(personId), totalPreguntas()]);
+  // Sin cuestionario cargado (base sin currículo) no se bloquea nada: sería dejar el bot inservible.
+  if (total === 0) return null;
+  return {
+    ok: false,
+    error: 'caracterizacion_pendiente',
+    faltan: total - hechas,
+    mensaje: `El plan curricular exige completar el cuestionario de caracterización antes de iniciar el curso. `
+      + `Le quedan ${total - hechas} de ${total} preguntas. Dile que escriba "cuestionario" para responderlas `
+      + `(son de alternativas y toma un par de minutos). NO entregues contenido del curso todavía.`,
+  };
+}
+
 async function practicaPendiente(personId: string): Promise<Record<string, unknown>> {
   const n = await quizzesPendientes(personId);
   if (n <= 0) return {};
@@ -36,6 +60,27 @@ async function practicaPendiente(personId: string): Promise<Record<string, unkno
       `Le quedan ${n} mini-quiz${n > 1 ? 'zes' : ''} de práctica de microcápsulas que ya completó. ` +
       'Ofréceselo en UNA frase al cierre de tu mensaje, diciéndole que escriba "quiz" para partir con uno. ' +
       'No insistas si no responde y no lo repitas en cada mensaje.',
+  };
+}
+
+/**
+ * Avance en una version anterior del programa, si hay algo que reconocer.
+ *
+ * Va en el resultado de las tools y no solo en la rehidratacion porque la rehidratacion se inyecta
+ * unicamente cuando la memoria de la conversacion esta vacia: quien ya venia conversando no la
+ * recibiria, y es justamente esa persona la que estaba a medio camino.
+ */
+async function reconocerAvancePrevio(personId: string): Promise<Record<string, unknown>> {
+  const previo = await avancePrevioArchivado(personId);
+  if (!previo) return {};
+  return {
+    versionAnterior: {
+      curso: previo.curso,
+      completadas: previo.completadas,
+      total: previo.total,
+      certificado: previo.folio,
+    },
+    instruccionVersionAnterior: frasePrevio(previo),
   };
 }
 
@@ -58,18 +103,29 @@ export async function executeTool(name: string, _input: unknown, ctx?: AgentCont
 
       case 'inscribirme_al_curso': {
         if (!ctx?.personId) return NO_REGISTRADO;
+        const bloqueo = await faltaCaracterizacion(ctx.personId);
+        if (bloqueo) return bloqueo;
         const estado = await inscribir(ctx.personId);
         if (!estado) return { ok: false, error: 'bd_no_disponible' };
         if (!estado.inscrito) return { ok: false, error: 'sin_curso_activo' };
         void audit({ type: 'inscripcion', dialogId: ctx.conversationId, detail: { curso: estado.curso?.codigo } });
-        return { ok: true, curso: estado.curso?.nombre, totalMicrocapsulas: estado.totalLecciones, primera: estado.proxima };
+        return {
+          ok: true, curso: estado.curso?.nombre, totalMicrocapsulas: estado.totalLecciones,
+          primera: estado.proxima,
+          ...(await reconocerAvancePrevio(ctx.personId)),
+        };
       }
 
       case 'consultar_progreso': {
         if (!ctx?.personId) return NO_REGISTRADO;
         const estado = await estadoAcademico(ctx.personId);
         if (!estado) return { ok: false, error: 'bd_no_disponible' };
-        if (!estado.inscrito) return { ok: true, inscrito: false, mensaje: 'No está inscrito aún; ofrécele inscribirse.' };
+        if (!estado.inscrito) {
+          return {
+            ok: true, inscrito: false, mensaje: 'No está inscrito aún; ofrécele inscribirse.',
+            ...(await reconocerAvancePrevio(ctx.personId)),
+          };
+        }
         return {
           ok: true,
           inscrito: true,
@@ -78,6 +134,9 @@ export async function executeTool(name: string, _input: unknown, ctx?: AgentCont
           completadas: estado.completadas,
           total: estado.totalLecciones,
           minutosAcumulados: estado.enrollment?.minutosAcumulados,
+          ...(estado.enrollment?.venceEn
+            ? { cupoVenceEn: new Date(estado.enrollment.venceEn).toISOString().slice(0, 10) }
+            : {}),
           proxima: estado.proxima ?? null,
           ...(await practicaPendiente(ctx.personId)),
         };
@@ -85,6 +144,18 @@ export async function executeTool(name: string, _input: unknown, ctx?: AgentCont
 
       case 'continuar_curso': {
         if (!ctx?.personId) return NO_REGISTRADO;
+        const bloqueo = await faltaCaracterizacion(ctx.personId);
+        if (bloqueo) return bloqueo;
+        // Cupo vencido: no es lo mismo que "no hay lección". Se reactiva en el acto —conserva el
+        // avance— y se sigue, en vez de dejar a la persona en un callejón sin salida.
+        const previo = await estadoAcademico(ctx.personId);
+        if (previo?.enrollment?.estado === 'vencida') {
+          const r = await reactivarInscripcion(ctx.personId);
+          if (r) {
+            void audit({ type: 'inscripcion_reactivada', dialogId: ctx.conversationId });
+          }
+        }
+
         const entrega = await entregarLeccionActual(ctx.personId);
         if (!entrega) {
           // Ya completó el curso (o no está inscrito). Si le quedan quizzes por rendir, es lo único
@@ -95,6 +166,7 @@ export async function executeTool(name: string, _input: unknown, ctx?: AgentCont
             error: 'sin_leccion_pendiente',
             mensaje: 'No hay lección pendiente: o no está inscrito, o ya completó el curso (consulta el progreso).',
             ...(await practicaPendiente(ctx.personId)),
+            ...(await reconocerAvancePrevio(ctx.personId)),
           };
         }
         void audit({ type: 'leccion_entregada', dialogId: ctx?.conversationId, detail: { orden: entrega.leccion.orden } });
@@ -120,7 +192,11 @@ export async function executeTool(name: string, _input: unknown, ctx?: AgentCont
         // ¿La microcápsula completada tiene mini-quiz? Se deja marcado para que el pipeline lo
         // envíe en cuanto salga esta respuesta (F7). El quiz NO se ofrece: se conduce siempre.
         const quiz = await quizDeLeccion(r.completada.id);
-        if (quiz && ctx?.conversationId) await marcarQuizPendiente(ctx.conversationId, r.cursoCompletado);
+        if (quiz && ctx?.conversationId) {
+          await marcarQuizPendiente(ctx.conversationId, r.cursoCompletado, {
+            lessonId: r.completada.id, pasoRuta: r.completada.pasoRuta,
+          });
+        }
         return {
           ok: true,
           completada: { orden: r.completada.orden, titulo: r.completada.titulo },

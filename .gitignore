@@ -11,3 +11,7 @@ dist
 
 # Salidas del harness pedagógico: se generan una por corrida (npm run eval:tutor).
 eval/resultados-*.json
+
+# Texto extraído de los .docx fuente (scripts/extraer-curriculo.py). Regenerable desde el material
+# original, que vive fuera del repo — no hay nada acá que no esté ya en curriculo/nivel1.json.
+scripts/curriculo/

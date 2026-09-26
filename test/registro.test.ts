@@ -175,3 +175,72 @@ test('corregir el email: vuelve a pedirlo', async () => {
   assert.equal(r.handled, true);
   assert.match(textos.at(-1)!, /correo/i);
 });
+
+// ── Hallazgo en producción (F14, 22-sep-2026): al revisar el panel de cohorte aparecieron
+// personas registradas con "Hola, Cuál Sería El Valor ? Necesito Saber El Valor" como nombre, un
+// correo pegado en la respuesta, y nombres duplicados como "Gabriela Silva Silva Arancibia". La
+// spec original de validarNombre solo exigía "sin dígitos": estos casos son texto libre real que
+// pasó esa validación. ──
+
+test('una pregunta no se persiste como nombre: se pide de nuevo, igual que cualquier dato inválido', async () => {
+  const { p, textos } = fakeProvider();
+  const from = '+56900010010';
+  await manejarRegistro(texto(from, 'hola'), p);
+  await manejarRegistro(boton(from, 'reg_si', 'Acepto'), p);
+
+  const r = await manejarRegistro(texto(from, 'Hola, Cuál Sería El Valor ? Necesito Saber El Valor'), p);
+  assert.equal(r.handled, true);
+  assert.match(textos.at(-1)!, /no parece un nombre/i);
+  assert.equal(personasMem.get(from), undefined, 'no se creó ninguna persona con ese "nombre"');
+});
+
+test('un correo pegado en la respuesta del nombre se rechaza, no se guarda tal cual', async () => {
+  const { p, textos } = fakeProvider();
+  const from = '+56900010011';
+  await manejarRegistro(texto(from, 'hola'), p);
+  await manejarRegistro(boton(from, 'reg_si', 'Acepto'), p);
+
+  const r = await manejarRegistro(texto(from, 'Sara Fredes Hfredes@indap.cl Ahí Está El Apellido'), p);
+  assert.equal(r.handled, true);
+  assert.match(textos.at(-1)!, /no parece un nombre/i);
+});
+
+test('nombre completo con apellidos repetido en la pregunta de apellido: no queda duplicado', async () => {
+  // El caso real: "Gabriela Silva" (nombre) + "Silva Arancibia" (apellido) se mostraba como
+  // "Gabriela Silva Silva Arancibia". Con la limpieza, el apellido guardado es solo lo nuevo.
+  const { p } = fakeProvider();
+  const from = '+56900010012';
+  await manejarRegistro(texto(from, 'hola'), p);
+  await manejarRegistro(boton(from, 'reg_si', 'Acepto'), p);
+  await manejarRegistro(texto(from, 'Gabriela Silva'), p);
+  await manejarRegistro(texto(from, 'Silva Arancibia'), p);
+  await manejarRegistro(texto(from, 'gabriela.silva@correo.cl'), p);
+  await manejarRegistro(boton(from, 'email_ok', 'Sí, es correcto'), p);
+
+  assert.equal(personasMem.get(from)?.nombre, 'Gabriela Silva');
+  assert.equal(personasMem.get(from)?.apellido, 'Arancibia', 'sin repetir "Silva"');
+});
+
+test('si el apellido repite TODO el nombre, no se guarda un apellido vacío: se vuelve a pedir', async () => {
+  // Caso real: nombre="Samuel Trangulado", apellido="Samuel" → tras limpiar, apellido queda vacío.
+  // Guardar "" sería peor que preguntar de nuevo, así que cuenta como inválido.
+  const { p, textos } = fakeProvider();
+  const from = '+56900010013';
+  await manejarRegistro(texto(from, 'hola'), p);
+  await manejarRegistro(boton(from, 'reg_si', 'Acepto'), p);
+  await manejarRegistro(texto(from, 'Samuel Trangulado'), p);
+
+  const r = await manejarRegistro(texto(from, 'Samuel'), p);
+  assert.equal(r.handled, true);
+  assert.match(textos.at(-1)!, /no me calza/i);
+  assert.equal(personasMem.get(from), undefined);
+});
+
+test('una credencial o profesión pegada al apellido (muchas palabras) se rechaza', async () => {
+  const { p, textos } = fakeProvider();
+  const from = '+56900010014';
+  await manejarRegistro(texto(from, 'hola'), p);
+  await manejarRegistro(boton(from, 'reg_si', 'Acepto'), p);
+  await manejarRegistro(texto(from, 'Magister En Derecho Penal Y Procesal Penal Urbina Reyes'), p);
+  assert.match(textos.at(-1)!, /no parece un nombre/i);
+});

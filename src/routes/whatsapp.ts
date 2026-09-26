@@ -15,11 +15,15 @@ import { getRequestContext, runWithRequestContext } from '../obs/requestContext'
 import { messagingProvider, normalizarEntrante } from '../messaging';
 import { pubsubHabilitado, publicarTurno } from '../messaging/colaTurnos';
 import type { InboundMessage, InboundStatus, MessagingProvider } from '../messaging';
+import { manejarBienestar } from '../flows/bienestar';
 import { manejarRegistro, CONSENT_VERSION } from '../flows/registro';
+import { manejarCaracterizacion } from '../flows/caracterizacion';
+import { manejarFichaCierre } from '../flows/fichaCierre';
 import { manejarEvaluacion, iniciarQuizPendiente } from '../flows/evaluacion';
+import { manejarNotaPersonal } from '../flows/notaPersonal';
 import { manejarCertificacion } from '../flows/certificacion';
 import { contextoAcademico } from '../store/cursos';
-import { registrarOptOut, registrarOptIn } from '../store/personas';
+import { registrarOptOut, registrarOptIn, estaExcluido } from '../store/personas';
 import { cancelarDePersona, marcarFallidoPorWamid } from '../store/recordatorios';
 import { esOptOutRecordatorios, esOptInRecordatorios } from '../reminders/motor';
 import { setJson } from '../store/kv';
@@ -78,6 +82,16 @@ export function metaWebhook(req: Request, res: Response) {
   const requestId = getRequestContext()?.requestId ?? '-';
   const evento = normalizarEntrante(req.body ?? {});
   const provider = messagingProvider();
+
+  // La cuenta de WhatsApp Business que originó el lote se registra UNA vez por id: es el dato que
+  // hace falta para administrar plantillas por API y no está en ninguna otra parte accesible con
+  // este token. Además deja ver a cuántas cuentas está suscrita la app, que es cómo se descubrió
+  // que llega tráfico de un número ajeno al piloto.
+  for (const waba of evento.wabaIds) {
+    void once(`waba:visto:${waba}`, 30 * 24 * 3600).then((primero) => {
+      if (primero) log.info('whatsapp: WABA emisora', { wabaId: waba, aPhoneNumberId: evento.messages[0]?.aPhoneNumberId ?? evento.statuses[0]?.recipient ?? null });
+    }).catch(() => {});
+  }
 
   procesarEstados(evento.statuses);
 
@@ -218,6 +232,29 @@ export async function procesarMensajeEntrante(msg: InboundMessage, provider: Mes
   // arranque en frío). Si el mensaje resulta no procesable y no respondemos, Meta lo retira a los 25 s.
   void provider.marcarLeido(msg.waMessageId).catch(() => {});
 
+  // Contención ante señal de riesgo vital: va ANTES que todo lo demás, incluido el registro.
+  //
+  // El prompt del tutor ya tiene el protocolo, pero solo alcanza a los mensajes que llegan al
+  // modelo. En el piloto alguien escribió "tengo pensamientos suicidas" en el campo del NOMBRE: el
+  // registro lo aceptó como nombre, siguió pidiendo el apellido, y la frase quedó guardada en su
+  // ficha. Acá se intercepta antes de que cualquier flujo la consuma.
+  const bienestar = await manejarBienestar(msg, provider);
+  if (bienestar.handled) return;
+
+  // Personas excluidas: ATLAS no les escribe ni les responde.
+  //
+  // Va DESPUÉS de bienestar a propósito. La exclusión se decide por un motivo de canal —no pisar una
+  // gestión comercial en curso—, y ese motivo no alcanza para callar ante una señal de riesgo vital:
+  // atender eso no interfiere con ninguna venta. Todo lo demás sí queda en silencio.
+  //
+  // Silencio real, sin acuse: cualquier respuesta, aunque fuera "no puedo atenderte", reabre la
+  // conversación que la exclusión busca cerrar. Meta ya recibió su 200; queda rastro para saber que
+  // pasó.
+  if (await estaExcluido(msg.from)) {
+    inc('inbound:excluido');
+    return log.info('whatsapp: mensaje de persona excluida, ignorado', { waMessageId: msg.waMessageId });
+  }
+
   // Registro de identidad (F3): asistente determinista para usuarios sin Persona. Si consume el
   // mensaje (pregunta/valida/persiste), el motor no corre. Sin BD (dev) se omite limpiamente.
   const registro = await manejarRegistro(msg, provider);
@@ -251,10 +288,28 @@ export async function procesarMensajeEntrante(msg: InboundMessage, provider: Mes
     return;
   }
 
+  // Caracterización: PRIMER paso de la experiencia según el plan curricular oficial. Interceptor
+  // determinista de 11 preguntas cerradas; la ruta curricular queda bloqueada hasta completarlo
+  // (el bloqueo vive en las tools, no en el prompt).
+  const caracterizacion = await manejarCaracterizacion(msg, persona, provider);
+  if (caracterizacion.handled) return;
+
+  // "Mi necesidad": el campo personal opcional de la microcápsula 2, que se abre al cerrar su
+  // práctica. Va antes de la evaluación porque su ventana existe justo cuando no hay quiz activo, y
+  // lo que la persona escriba ahí es una frase libre que ningún otro flujo debe interpretar.
+  const nota = await manejarNotaPersonal(msg, persona, provider);
+  if (nota.handled) return;
+
   // Evaluaciones formativas (F7): interceptor determinista de respuestas de quiz (botones/listas o
   // texto A-D/V-F) ANTES del motor — el parsing y el registro académico jamás se delegan al LLM.
   const evaluacion = await manejarEvaluacion(msg, persona, provider);
   if (evaluacion.handled) return;
+
+  // Producto de cierre: la ficha de resolución de problema, evidencia de aplicación de la ruta
+  // completa que el plan curricular define como cierre del nivel. Va ANTES de la certificación:
+  // la ficha es el requisito de la microcápsula 8, y sin ella el curso no está completo.
+  const ficha = await manejarFichaCierre(msg, persona, provider);
+  if (ficha.handled) return;
 
   // Certificación (F8): interceptor determinista — RUT, verificación de correo y emisión jamás
   // pasan por el LLM.

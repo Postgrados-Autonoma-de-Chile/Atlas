@@ -74,6 +74,21 @@ const Env = z.object({
 
   // ── Seguridad / observabilidad ──
   DASHBOARD_TOKEN: z.string().default(''),
+  /**
+   * Token que abre SOLO la vista de dirección: la de puros agregados, sin un dato personal. Existe
+   * para poder repartirla a quien dirige el programa sin entregarle además la lista de personas
+   * con sus teléfonos. Vacío = no existe ese acceso, y el panel completo sigue siendo el único.
+   */
+  DASHBOARD_TOKEN_DIRECCION: z.string().default(''),
+  /**
+   * Tokens de dirección CON NOMBRE, uno por línea: `Nombre Apellido|token`.
+   *
+   * Un token compartido no deja saber quién miró, y revocárselo a una persona obliga a rotarlo
+   * para todas. Con uno por persona, la auditoría registra el nombre y revocar es borrar su línea.
+   * El separador es `|` porque no aparece ni en un nombre ni en un token base64url. Las líneas en
+   * blanco y las que empiezan con `#` se ignoran, para poder dejar comentarios en el secreto.
+   */
+  DASHBOARD_TOKENS_DIRECCION: z.string().default(''),
   AUDIT_RETENTION_DAYS: z.coerce.number().int().min(0).default(90),
   /** Clave AES-256-GCM (64 hex) para PII en reposo. Obligatoria en producción (F12). */
   TOKEN_ENC_KEY: z.string().regex(/^([0-9a-fA-F]{64})?$/, 'debe ser 64 caracteres hex (32 bytes)').default(''),
@@ -88,6 +103,16 @@ const Env = z.object({
 
   // ── Memoria conversacional (la académica vive en Postgres, F3-4) ──
   MEMORY_TTL_HOURS: z.coerce.number().int().positive().default(48),
+  /** Cada cuánto se refresca solo el panel de cohorte, en segundos. */
+  PANEL_REFRESCO_SEG: z.coerce.number().int().min(10).max(3600).default(60),
+  /**
+   * Costo medio de un turno del tutor, en pesos. Lo usa la vista de dirección para poner precio al
+   * programa. El valor por defecto es una MEDICIÓN, no un supuesto: USD 0,00967 por turno sobre 218
+   * turnos reales del piloto (58 % de la entrada servida desde caché), convertidos al tipo de cambio
+   * del export de facturación de GCP, 934,32 CLP/USD. Se pone acá y no en el render para que se
+   * pueda corregir cuando cambien el precio del modelo o el dólar, y para que el número tenga dueño.
+   */
+  PANEL_CLP_POR_TURNO: z.coerce.number().min(0).default(9.03),
   MEMORY_MAX_TURNS: z.coerce.number().int().positive().default(24),
 
   // ── Pub/Sub (F11: split webhook/worker). Vacío = despacho in-process (dev / piloto 1 servicio) ──
@@ -108,13 +133,34 @@ const Env = z.object({
   SMTP_FROM: z.string().default(''),
 
   // ── Recordatorios (F9) ──
-  /** Nombre de la plantilla utility APROBADA por Meta para recordatorios fuera de ventana 24h. */
+  /** Plantilla utility APROBADA para quien ESTÁ cursando: nombre, pendientes y fecha del cupo. */
   WA_TEMPLATE_RECORDATORIO: z.string().default(''),
+  /**
+   * Plantilla utility para quien se registró y NO tiene inscripción activa. Ancla en el estado del
+   * cuestionario —"completaste 5 de 11"—, que es un proceso que la persona inició: la otra plantilla
+   * habla de un cupo vigente y a esta gente le diría algo falso.
+   */
+  WA_TEMPLATE_CUESTIONARIO: z.string().default(''),
   WA_TEMPLATE_LANG: z.string().default('es'),
   /** Días de inactividad antes de recordar (y ventana del dedupe: máx. 1 recordatorio cada N días). */
   REMINDER_DIAS_INACTIVIDAD: z.coerce.number().int().positive().default(3),
   /** Tope de recordatorios sin nueva actividad del estudiante (luego se deja de insistir). */
   REMINDER_MAX_SIN_ACTIVIDAD: z.coerce.number().int().positive().default(3),
+  /**
+   * Tope de recordatorios NUEVOS por corrida. El tope de arriba es por persona; este es por tanda,
+   * y existe porque son cosas distintas: tras una pausa larga el backlog acumulado se planificaba
+   * entero de una vez (83 plantillas en un minuto, 24-09-2026), que es el patrón que Meta penaliza
+   * en un número recién registrado. Lo que excede se difiere a la corrida siguiente, no se pierde.
+   */
+  REMINDER_MAX_POR_CORRIDA: z.coerce.number().int().positive().default(25),
+  /**
+   * Horas de inactividad para el PRIMER aviso, que va dentro de la ventana de servicio de 24 h y
+   * por lo tanto es gratis. Tiene que ser < 24: pasada la ventana ya no hay texto libre y el aviso
+   * costaría una plantilla, que es justo lo que este umbral evita.
+   */
+  REMINDER_HORAS_PRIMER_AVISO: z.coerce.number().int().min(1).max(23).default(20),
+  /** Días que dura el cupo desde la inscripción. Vencido, la persona puede reactivarlo. */
+  INSCRIPCION_DIAS_VIGENCIA: z.coerce.number().int().positive().default(30),
 
   // ── Convocatoria de cohortes ──
   /** Apagada por defecto: encenderla gasta plantillas pagadas y consume el tramo de Meta. */
@@ -168,6 +214,45 @@ if (isProd) {
   if (env.DEV_FAIL_OPEN === 'true') throw new Error('DEV_FAIL_OPEN=true está prohibido en producción');
 }
 
+/** Un acceso con nombre al panel de dirección. El token nunca sale de acá hacia ningún log. */
+export type TokenNombrado = { nombre: string; token: string };
+
+/**
+ * Lee la lista `Nombre|token`, una por línea.
+ *
+ * Los problemas se avisan fuerte y se descartan en vez de romper el arranque: una línea mal escrita
+ * en el secreto no puede dejar el servicio sin levantar, pero tampoco puede pasar inadvertida —
+ * sería un director que cree tener acceso y no lo tiene. Los tokens cortos se rechazan: un secreto
+ * de seis caracteres en una ruta pública es adivinable, y aceptarlo en silencio sería peor que no
+ * tener la función.
+ */
+export function parseTokensNombrados(crudo: string): TokenNombrado[] {
+  const salida: TokenNombrado[] = [];
+  const vistos = new Set<string>();
+  for (const linea of crudo.split('\n')) {
+    const l = linea.trim();
+    if (!l || l.startsWith('#')) continue;
+    const corte = l.indexOf('|');
+    if (corte < 1) {
+      console.warn(`DASHBOARD_TOKENS_DIRECCION: línea sin separador "|", ignorada: ${l.slice(0, 20)}…`);
+      continue;
+    }
+    const nombre = l.slice(0, corte).trim();
+    const token = l.slice(corte + 1).trim();
+    if (!nombre || token.length < 16) {
+      console.warn(`DASHBOARD_TOKENS_DIRECCION: "${nombre || '(sin nombre)'}" ignorado (token ausente o de menos de 16 caracteres)`);
+      continue;
+    }
+    if (vistos.has(token)) {
+      console.warn(`DASHBOARD_TOKENS_DIRECCION: "${nombre}" repite un token ya asignado, ignorado`);
+      continue;
+    }
+    vistos.add(token);
+    salida.push({ nombre, token });
+  }
+  return salida;
+}
+
 export const config = {
   isProd,
   port: env.PORT,
@@ -213,6 +298,8 @@ export const config = {
   chattigoWebhookToken: env.CHATTIGO_WEBHOOK_TOKEN,
 
   dashboardToken: env.DASHBOARD_TOKEN,
+  dashboardTokenDireccion: env.DASHBOARD_TOKEN_DIRECCION,
+  dashboardTokensDireccion: parseTokensNombrados(env.DASHBOARD_TOKENS_DIRECCION),
   auditRetentionDays: env.AUDIT_RETENTION_DAYS,
   tokenEncKey: env.TOKEN_ENC_KEY,
   devFailOpen: env.DEV_FAIL_OPEN === 'true',
@@ -222,6 +309,8 @@ export const config = {
   maxConcurrentTurns: env.MAX_CONCURRENT_TURNS,
 
   memoryTtlHours: env.MEMORY_TTL_HOURS,
+  panelRefrescoSeg: env.PANEL_REFRESCO_SEG,
+  panelClpPorTurno: env.PANEL_CLP_POR_TURNO,
   memoryMaxTurns: env.MEMORY_MAX_TURNS,
 
   pubsubTopic: env.PUBSUB_TOPIC,
@@ -236,9 +325,13 @@ export const config = {
   smtpFrom: env.SMTP_FROM,
 
   waTemplateRecordatorio: env.WA_TEMPLATE_RECORDATORIO,
+  waTemplateCuestionario: env.WA_TEMPLATE_CUESTIONARIO,
   waTemplateLang: env.WA_TEMPLATE_LANG,
   reminderDiasInactividad: env.REMINDER_DIAS_INACTIVIDAD,
   reminderMaxSinActividad: env.REMINDER_MAX_SIN_ACTIVIDAD,
+  reminderMaxPorCorrida: env.REMINDER_MAX_POR_CORRIDA,
+  reminderHorasPrimerAviso: env.REMINDER_HORAS_PRIMER_AVISO,
+  inscripcionDiasVigencia: env.INSCRIPCION_DIAS_VIGENCIA,
 
   convocatoriaActiva: env.CONVOCATORIA_ACTIVA === 'true',
   convocatoriaTemplate: env.CONVOCATORIA_TEMPLATE,

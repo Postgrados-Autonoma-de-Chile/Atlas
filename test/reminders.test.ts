@@ -6,7 +6,11 @@ import assert from 'node:assert/strict';
 process.env.REDIS_URL = '';
 process.env.DATABASE_URL = '';
 process.env.NODE_ENV = 'test';
-process.env.WA_TEMPLATE_RECORDATORIO = ''; // por defecto sin plantilla; se simula por caso
+// La plantilla NO se simula por variable de entorno: `config` es un singleton que se congela al
+// importarse, así que cambiar process.env después no tiene ningún efecto. Se mockea el módulo.
+let plantillaConfigurada = '';
+let plantillaCuestionario = '';
+let maxPorCorrida = 1000; // por defecto no limita: los tests que no lo prueban no deben verse afectados
 
 type Rm = { id: string; personId: string; tipo: string; estado: string; clave: string; programadoPara: Date; intentos: number; waMessageId?: string | null };
 const rms = new Map<string, Rm>();
@@ -22,12 +26,36 @@ const ESTADO_ACTIVO = {
   proxima: { orden: 3, titulo: 'Asistentes conversacionales', tipo: 'capsula', duracionMin: 6 },
 };
 
+/** Segundo segmento: registradas que no están cursando. */
+let sinInscripcion: any[] = [];
+/** Primer aviso, dentro de la ventana gratuita. */
+let primerAviso: any[] = [];
+let caracterizacionCompleta = true;
+let respondidasSim = 0;
+let avancePrevio: any = null;
+
+mock.module('../src/config.ts', {
+  namedExports: {
+    config: {
+      get waTemplateRecordatorio() { return plantillaConfigurada; },
+      get waTemplateCuestionario() { return plantillaCuestionario; },
+      waTemplateLang: 'es',
+      reminderDiasInactividad: 3,
+      reminderMaxSinActividad: 3,
+      get reminderMaxPorCorrida() { return maxPorCorrida; },
+      reminderHorasPrimerAviso: 20,
+      inscripcionDiasVigencia: 30,
+    },
+  },
+});
 mock.module('../src/store/db.ts', {
   namedExports: { dbEnabled: () => true, dbInsertAudit: async () => {}, getPool: () => null },
 });
 mock.module('../src/store/recordatorios.ts', {
   namedExports: {
     candidatosContinuarCurso: async () => candidatos,
+    candidatosPrimerAviso: async () => primerAviso,
+    candidatosSinInscripcion: async () => sinInscripcion,
     programarRecordatorio: async (personId: string, tipo: string, clave: string, cuando: Date) => {
       if ([...rms.values()].some((r) => r.clave === clave)) return false; // UNIQUE clave_dedupe
       const id = 'rm' + ++idSeq;
@@ -59,9 +87,21 @@ mock.module('../src/store/recordatorios.ts', {
     marcarFallidoPorWamid: async () => {},
   },
 });
+mock.module('../src/store/caracterizacion.ts', {
+  namedExports: {
+    estaCompleta: async () => caracterizacionCompleta,
+    respondidas: async () => respondidasSim,
+    totalPreguntas: async () => 11,
+    totalPreguntas: async () => 11,
+  },
+});
 mock.module('../src/store/cursos.ts', {
   namedExports: {
-    cursoActivo: async () => null,
+    reactivarInscripcion: async () => null,
+    expirarInscripciones: async () => 0,
+    avancePrevioArchivado: async () => avancePrevio,
+    frasePrevio: () => '',
+    cursoActivo: async () => ({ id: 'c1', codigo: 'NIVEL-1', nombre: 'Nivel Inicial: Alfabetización ciudadana en IA', descripcion: null, duracionMin: 55 }),
     inscribir: async () => null,
     estadoAcademico: async () => estadoAcad,
     entregarLeccionActual: async () => null,
@@ -99,7 +139,15 @@ function fakeProvider(fallar = false) {
 
 const reset = () => {
   rms.clear();
+  plantillaConfigurada = '';
+  plantillaCuestionario = '';
+  maxPorCorrida = 1000;
   estadoAcad = structuredClone(ESTADO_ACTIVO);
+  sinInscripcion = [];
+  primerAviso = [];
+  caracterizacionCompleta = true;
+  respondidasSim = 0;
+  avancePrevio = null;
   candidatos = [{ personId: 'p1', waId: '+56900050001', nombre: 'Rodrigo', cursoNombre: 'C', proximaLeccion: null, enviadosSinActividad: 0 }];
 };
 
@@ -140,6 +188,45 @@ test('planificar: respeta el tope de insistencia y el dedupe re-ejecutando', asy
   assert.equal(r1.omitidosPorTope, 1);
   const r2 = await planificar(LUNES_MEDIODIA);
   assert.equal(r2.programados, 0, 'el dedupe impide duplicar');
+});
+
+// El tope de arriba es por persona. Este es por tanda, y son cosas distintas: el 24-09-2026, al
+// reanudar el scheduler tras 3 semanas pausado, el backlog entero se planificó de una vez y salieron
+// 83 plantillas en un minuto desde un número recién registrado.
+test('planificar: el tope por corrida difiere el excedente, que entra en las corridas siguientes', async () => {
+  reset();
+  maxPorCorrida = 2;
+  candidatos = [];
+  sinInscripcion = [1, 2, 3, 4, 5].map((n) => ({
+    personId: `s${n}`, waId: `+5690005000${n}`, nombre: `P${n}`, enviadosSinActividad: 0,
+  }));
+
+  const r1 = await planificar(LUNES_MEDIODIA);
+  assert.equal(r1.programados, 2, 'solo entran los que caben en el tope');
+  assert.equal(r1.diferidos, 3, 'el resto queda diferido, no descartado');
+
+  const r2 = await planificar(LUNES_MEDIODIA);
+  assert.equal(r2.programados, 2, 'la corrida siguiente toma a los que faltaban');
+  assert.equal(r2.diferidos, 1);
+
+  const r3 = await planificar(LUNES_MEDIODIA);
+  assert.equal(r3.programados, 1, 'la tercera termina de drenar el backlog');
+  assert.equal(r3.diferidos, 0);
+
+  assert.equal(rms.size, 5, 'las 5 personas terminan programadas: el tope reparte, no pierde');
+});
+
+test('planificar: con el cupo justo, el aviso gratuito gana al que cuesta plantilla', async () => {
+  reset();
+  maxPorCorrida = 1;
+  candidatos = [];
+  primerAviso = [{ personId: 'pa1', waId: '+56900050009', nombre: 'Z' }];
+  sinInscripcion = [{ personId: 's1', waId: '+56900050001', nombre: 'A', enviadosSinActividad: 0 }];
+
+  const r = await planificar(LUNES_MEDIODIA);
+  assert.equal(r.programados, 1);
+  assert.equal(r.diferidos, 1);
+  assert.equal([...rms.values()][0].tipo, 'primer_aviso', 'el cupo se lo lleva el mensaje que no cuesta');
 });
 
 test('revalidación al despachar: inscripción completada → cancelado sin enviar', async () => {
@@ -226,4 +313,310 @@ test('despachar: fallo del proveedor devuelve a programado (intentos) y al terce
   assert.equal(r.fallidos, 1);
   assert.equal(rm.estado, 'fallido');
   await kvDel('ult_in:+56900050001');
+});
+
+// ── Registradas que NO están cursando ───────────────────────────────────────
+//
+// El motor solo miraba inscripciones activas, y por eso el segmento más grande de recuperables no
+// recibía nada: en el piloto eran 8 de 21 personas — más que las que estaban cursando. Quien se
+// registró y nunca empezó, quien dejó el cuestionario a medias, y quien quedó colgando de un curso
+// archivado tras actualizar el currículo.
+
+const sin = (over: any = {}) => ({
+  personId: 'p9', waId: '+56911112222', nombre: 'Ana', cursoNombre: 'Nivel Inicial',
+  proximaLeccion: null, enviadosSinActividad: 0,
+  caracterizacionParcial: false, vieneDeVersionAnterior: false, ...over,
+});
+
+test('se programa recordatorio a quien se registró y no está cursando', async () => {
+  reset();
+  candidatos = [];
+  sinInscripcion = [sin()];
+  const r = await planificar(LUNES_MEDIODIA);
+  assert.equal(r.candidatos, 1);
+  assert.equal(r.programados, 1);
+  assert.equal([...rms.values()][0].tipo, 'retomar', 'usa su propio tipo, con su propio tope');
+});
+
+test('NO se cancela por no estar inscrita: es justamente el motivo del aviso', async () => {
+  // El despachador cancelaba todo lo que no tuviera inscripción activa. Con esa regla, este
+  // segmento entero se habría cancelado en silencio y nadie habría notado que no llega nada.
+  reset();
+  candidatos = [];
+  sinInscripcion = [sin()];
+  estadoAcad = { inscrito: false };
+  await planificar(LUNES_MEDIODIA);
+  const rm = [...rms.values()][0];
+  rm.programadoPara = FUTURO();
+  await setJson('ult_in:+56900050001', { t: Date.now() }, 3600);
+  const { p, textos } = fakeProvider();
+  const d = await despachar(p, LUNES_MEDIODIA);
+  assert.equal(d.cancelados, 0);
+  assert.equal(d.enviados, 1);
+  assert.match(textos[0], /todavía no empiezas/i);
+});
+
+test('si ya empezó a cursar, ese recordatorio se cancela', async () => {
+  reset();
+  candidatos = [];
+  sinInscripcion = [sin()];
+  await planificar(LUNES_MEDIODIA);
+  estadoAcad = { inscrito: true, enrollment: { id: 'e1', estado: 'activa', minutosAcumulados: 0 },
+                 curso: { id: 'c1', codigo: 'X', nombre: 'Nivel Inicial', duracionMin: 55 },
+                 totalLecciones: 8, completadas: 0 };
+  const { p } = fakeProvider();
+  const d = await despachar(p, LUNES_MEDIODIA);
+  assert.equal(d.cancelados, 1, 'volvió por su cuenta: el aviso sobra');
+  assert.equal(d.enviados, 0);
+});
+
+test('el mensaje dice DÓNDE quedó: cuestionario a medias', async () => {
+  // "Sigue tu curso" es ruido. "Te faltan preguntas del cuestionario" es una acción.
+  reset();
+  candidatos = [];
+  sinInscripcion = [sin()];
+  estadoAcad = { inscrito: false };
+  caracterizacionCompleta = false;
+  respondidasSim = 5;
+  await planificar(LUNES_MEDIODIA);
+  const rm = [...rms.values()][0];
+  rm.programadoPara = FUTURO();
+  await setJson('ult_in:+56900050001', { t: Date.now() }, 3600);
+  const { p, textos } = fakeProvider();
+  await despachar(p, LUNES_MEDIODIA);
+  assert.match(textos[0], /cuestionario/i);
+  caracterizacionCompleta = true; respondidasSim = 0;
+});
+
+test('a quien venía de la versión anterior se le explica el cambio', async () => {
+  reset();
+  candidatos = [];
+  sinInscripcion = [sin()];
+  estadoAcad = { inscrito: false };
+  avancePrevio = { curso: 'IA en la vida cotidiana', completadas: 3, total: 9, folio: null };
+  await planificar(LUNES_MEDIODIA);
+  const rm = [...rms.values()][0];
+  rm.programadoPara = FUTURO();
+  await setJson('ult_in:+56900050001', { t: Date.now() }, 3600);
+  const { p, textos } = fakeProvider();
+  await despachar(p, LUNES_MEDIODIA);
+  assert.match(textos[0], /se actualizó/i);
+  assert.match(textos[0], /no se traslada/i, 'sin prometer que se recupera el avance');
+  avancePrevio = null;
+});
+
+test('el tope de insistencia también aplica a este segmento', async () => {
+  reset();
+  candidatos = [];
+  sinInscripcion = [sin({ enviadosSinActividad: 3 })];
+  const r = await planificar(LUNES_MEDIODIA);
+  assert.equal(r.programados, 0);
+  assert.equal(r.omitidosPorTope, 1);
+});
+
+test('los dos segmentos conviven y se cuentan juntos', async () => {
+  reset();
+  sinInscripcion = [sin({ personId: 'p9' })];
+  const r = await planificar(LUNES_MEDIODIA);
+  assert.equal(r.candidatos, candidatos.length + 1);
+  assert.equal(r.programados, candidatos.length + 1);
+  const tipos = [...rms.values()].map((x) => x.tipo).sort();
+  assert.ok(tipos.includes('retomar') && tipos.includes('continuar_curso'));
+  sinInscripcion = [];
+});
+
+// ── Primer aviso, dentro de la ventana gratuita ─────────────────────────────
+//
+// Meta clasificó nuestra plantilla de recordatorio como MARKETING: CLP 78,49 en vez de 17,66,
+// porque "vuelve a tu curso" es re-engagement por definición y ninguna redacción lo cambia. El
+// primer aviso se manda ANTES de que se cierre la ventana de 24 h, donde no hay tarifa ni
+// categoría que discutir.
+
+const primero = (over: any = {}) => ({
+  personId: 'p1', waId: '+56900050001', nombre: 'Rodrigo', cursoNombre: 'C',
+  proximaLeccion: 'Cómo describir un problema', enviadosSinActividad: 0, ...over,
+});
+
+test('el primer aviso se programa antes que el de 7 días', async () => {
+  // Se planifica primero para que, cuando ambos apliquen, gane el que no cuesta.
+  reset();
+  candidatos = [];
+  primerAviso = [primero()];
+  const r = await planificar(LUNES_MEDIODIA);
+  assert.equal(r.programados, 1);
+  assert.equal([...rms.values()][0].tipo, 'primer_aviso');
+});
+
+test('con la ventana abierta sale como texto libre y NO como plantilla', async () => {
+  reset();
+  candidatos = [];
+  primerAviso = [primero()];
+  await planificar(LUNES_MEDIODIA);
+  const rm = [...rms.values()][0];
+  rm.programadoPara = FUTURO();
+  await setJson('ult_in:+56900050001', { t: Date.now() }, 3600);
+  const { p, textos, plantillas } = fakeProvider();
+  const d = await despachar(p, LUNES_MEDIODIA);
+  assert.equal(d.enviados, 1);
+  assert.equal(plantillas.length, 0, 'gratis: no toca una plantilla');
+  assert.match(textos[0], /¿Seguimos/);
+  // La próxima lección se lee del estado AL DESPACHAR, no de la que traía el candidato: entre
+  // planificar y enviar la persona pudo avanzar, y el mensaje nombraría una microcápsula que ya hizo.
+  assert.match(textos[0], /Asistentes conversacionales/, 'dice dónde quedó, según el estado actual');
+});
+
+test('si la ventana ya se cerró, se DESCARTA en vez de gastar una plantilla', async () => {
+  // Es la regla que da sentido a todo el mecanismo: convertirlo en plantilla costaría CLP 78,49
+  // por hacer lo mismo que el aviso de los 7 días hará después, gratis para el presupuesto.
+  reset();
+  candidatos = [];
+  primerAviso = [primero()];
+  await planificar(LUNES_MEDIODIA);
+  const rm = [...rms.values()][0];
+  rm.programadoPara = FUTURO();
+  await kvDel('ult_in:+56900050001');           // ventana cerrada
+  plantillaConfigurada = 'estado_inscripcion_curso'; // aunque HAYA plantilla disponible
+  const { p, plantillas } = fakeProvider();
+  const d = await despachar(p, LUNES_MEDIODIA);
+  assert.equal(d.omitidos, 1);
+  assert.equal(d.enviados, 0);
+  assert.equal(plantillas.length, 0);
+  plantillaConfigurada = '';
+});
+
+test('uno solo por episodio: el dedupe lo impide dos veces el mismo día', async () => {
+  reset();
+  candidatos = [];
+  primerAviso = [primero()];
+  await planificar(LUNES_MEDIODIA);
+  const r2 = await planificar(new Date(LUNES_MEDIODIA.getTime() + 3 * 3600 * 1000));
+  assert.equal(r2.programados, 0, 'la clave de dedupe es por persona y día');
+  assert.equal(rms.size, 1);
+});
+
+// ── La plantilla anclada ────────────────────────────────────────────────────
+//
+// Meta clasificó como MARKETING la primera plantilla, que decía "tienes microcápsulas pendientes,
+// responde para continuar": sin dato verificable y con CTA de reactivación. La segunda describe el
+// estado de una inscripción concreta —nombre, cuántas quedan, cuándo vence— que es lo que su
+// definición de utility admite. Ese cambio solo es honesto porque el plazo ahora existe de verdad.
+
+const CURSANDO = (venceEn: Date | null) => ({
+  inscrito: true,
+  curso: { id: 'c1', codigo: 'X', nombre: 'Nivel Inicial', duracionMin: 55 },
+  enrollment: { id: 'e1', estado: 'activa', minutosAcumulados: 12, venceEn },
+  totalLecciones: 8, completadas: 2,
+  proxima: { orden: 3, titulo: 'Cómo pedir información útil', tipo: 'capsula', duracionMin: 6 },
+});
+
+test('la plantilla lleva tres variables: nombre, pendientes y fecha del cupo', async () => {
+  reset();
+  estadoAcad = CURSANDO(new Date('2026-10-11T15:00:00Z'));
+  plantillaConfigurada = 'estado_inscripcion_curso';
+  await planificar(LUNES_MEDIODIA);
+  const rm = [...rms.values()][0];
+  rm.programadoPara = FUTURO();
+  await kvDel('ult_in:+56900050001');            // ventana cerrada → plantilla
+  const { p, plantillas } = fakeProvider();
+  const d = await despachar(p, LUNES_MEDIODIA);
+  plantillaConfigurada = '';
+
+  assert.equal(d.enviados, 1);
+  assert.equal(plantillas.length, 1);
+  assert.equal(plantillas[0].params.length, 3, 'tres, o Meta rechaza por desajuste de parámetros');
+  assert.equal(plantillas[0].params[1], '6', '8 microcápsulas menos las 2 hechas');
+  assert.match(plantillas[0].params[2], /octubre/, 'la fecha real del cupo');
+});
+
+test('sin fecha de cupo NO se manda la plantilla: diría algo que no se sabe', async () => {
+  reset();
+  estadoAcad = CURSANDO(null);
+  plantillaConfigurada = 'estado_inscripcion_curso';
+  await planificar(LUNES_MEDIODIA);
+  const rm = [...rms.values()][0];
+  rm.programadoPara = FUTURO();
+  await kvDel('ult_in:+56900050001');
+  const { p, plantillas } = fakeProvider();
+  const d = await despachar(p, LUNES_MEDIODIA);
+  plantillaConfigurada = '';
+
+  assert.equal(d.omitidos, 1);
+  assert.equal(plantillas.length, 0);
+});
+
+test('el mensaje gratuito también dice el plazo', async () => {
+  // Decir la fecha solo en la plantilla dejaría peor informado justo a quien sí está conversando.
+  reset();
+  estadoAcad = CURSANDO(new Date('2026-10-11T15:00:00Z'));
+  await planificar(LUNES_MEDIODIA);
+  const rm = [...rms.values()][0];
+  rm.programadoPara = FUTURO();
+  await setJson('ult_in:+56900050001', { t: Date.now() }, 3600);
+  const { p, textos } = fakeProvider();
+  await despachar(p, LUNES_MEDIODIA);
+  assert.match(textos[0], /vence el \*11 de octubre\*/);
+});
+
+// ── Cada segmento con SU plantilla ──────────────────────────────────────────
+//
+// La plantilla del cupo afirma "tu cupo vence el X": solo es cierta para quien tiene inscripción
+// vigente. A quien se registró y nunca empezó hay que hablarle de lo que sí inició — el
+// cuestionario— o no hablarle. Usar una plantilla en el segmento de la otra sería mandar un dato
+// falso para ahorrarse una aprobación.
+
+test('a quien no está cursando se le manda la plantilla del cuestionario', async () => {
+  reset();
+  candidatos = [];
+  sinInscripcion = [sin()];
+  estadoAcad = { inscrito: false };
+  plantillaCuestionario = 'estado_cuestionario_inicial';
+  respondidasSim = 5;
+  caracterizacionCompleta = false;
+  await planificar(LUNES_MEDIODIA);
+  const rm = [...rms.values()][0];
+  rm.programadoPara = FUTURO();
+  await kvDel('ult_in:+56900050001');
+  const { p, plantillas } = fakeProvider();
+  const d = await despachar(p, LUNES_MEDIODIA);
+
+  assert.equal(d.enviados, 1);
+  assert.equal(plantillas[0].nombre, 'estado_cuestionario_inicial');
+  assert.deepEqual(plantillas[0].params, ['Rodrigo', '5', '11'], 'nombre, respondidas y total');
+});
+
+test('con el cuestionario completo NO se manda: diría que le falta un paso que ya dio', async () => {
+  reset();
+  candidatos = [];
+  sinInscripcion = [sin()];
+  estadoAcad = { inscrito: false };
+  plantillaCuestionario = 'estado_cuestionario_inicial';
+  respondidasSim = 11;
+  await planificar(LUNES_MEDIODIA);
+  const rm = [...rms.values()][0];
+  rm.programadoPara = FUTURO();
+  await kvDel('ult_in:+56900050001');
+  const { p, plantillas } = fakeProvider();
+  const d = await despachar(p, LUNES_MEDIODIA);
+
+  assert.equal(d.omitidos, 1);
+  assert.equal(plantillas.length, 0);
+});
+
+test('la plantilla del cupo NO se usa para quien no tiene cupo', async () => {
+  // Es la confusión que costaría caro: el mensaje diría "tu cupo vence el X" a alguien sin cupo.
+  reset();
+  candidatos = [];
+  sinInscripcion = [sin()];
+  estadoAcad = { inscrito: false };
+  plantillaConfigurada = 'estado_inscripcion_curso';  // la del cupo, disponible
+  plantillaCuestionario = '';                          // la del cuestionario, no
+  await planificar(LUNES_MEDIODIA);
+  const rm = [...rms.values()][0];
+  rm.programadoPara = FUTURO();
+  await kvDel('ult_in:+56900050001');
+  const { p, plantillas } = fakeProvider();
+  const d = await despachar(p, LUNES_MEDIODIA);
+
+  assert.equal(d.omitidos, 1, 'prefiere no escribir antes que escribir algo falso');
+  assert.equal(plantillas.length, 0);
 });

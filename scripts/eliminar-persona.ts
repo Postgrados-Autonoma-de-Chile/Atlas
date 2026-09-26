@@ -5,7 +5,7 @@
 //
 // Uso: DATABASE_URL=... npx tsx scripts/eliminar-persona.ts <+56912345678 | person-uuid> --confirmar
 import { initDb, getPool } from '../src/store/db';
-import { kvDel } from '../src/store/kv';
+import { kvDel, kvKind } from '../src/store/kv';
 
 async function main() {
   const [quien, flag] = process.argv.slice(2);
@@ -56,8 +56,25 @@ async function main() {
     client.release();
   }
 
+  // Sin REDIS_URL, kv degrada a memoria y esta limpieza no toca nada — aparentaría haber
+  // funcionado. Pasó de verdad: dos supresiones dejaron la memoria conversacional intacta, y una
+  // persona que volvió a registrarse en el mismo número heredó el hilo anterior. Se avisa fuerte en
+  // vez de mentir en la última línea.
+  if (row.wa_id && kvKind !== 'redis') {
+    console.warn(`
+⚠ kv en modo "${kvKind}": los datos de Postgres SÍ se borraron, pero el estado`);
+    console.warn('  efímero (memoria del tutor, flujos a medio camino) NO. Vuelve a ejecutar con');
+    console.warn(`  REDIS_URL, o corre: npx tsx scripts/olvidar-conversacion.ts ${row.wa_id}`);
+  }
   if (row.wa_id) {
-    for (const prefijo of ['mem:', 'registro:', 'evaluacion:', 'cert:', 'quiz:oferta:', 'ult_in:']) {
+    // Un prefijo que falte deja residuo de una persona ya suprimida, así que esta lista tiene que
+    // seguir a los flujos: 'caracterizacion:', 'ficha:' y 'quiz:pendiente:' nacieron con la
+    // alineación curricular y no estaban acá. ('quiz:oferta:' desapareció al volverse obligatoria
+    // la práctica; se conserva para limpiar instalaciones que aún lo tengan.)
+    for (const prefijo of [
+      'mem:', 'registro:', 'caracterizacion:', 'evaluacion:', 'quiz:pendiente:', 'quiz:oferta:',
+      'ficha:', 'cert:', 'ult_in:',
+    ]) {
       await kvDel(`${prefijo}${row.wa_id}`);
     }
     await kvDel(`certcode:${row.id}`);

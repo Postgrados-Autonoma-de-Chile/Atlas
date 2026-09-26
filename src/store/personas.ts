@@ -51,6 +51,35 @@ export async function buscarPersonaPorWaId(waId: string): Promise<Persona | null
   }
 }
 
+/**
+ * ¿Este número está excluido? Una persona excluida no recibe mensajes de ATLAS ni obtiene respuesta.
+ *
+ * Ante un error de BD devuelve false (se atiende). Es deliberado y es la opción menos mala: el otro
+ * camino —callar ante la duda— convierte cualquier intermitencia de la base en un apagón silencioso
+ * del servicio completo, que es más grave y más difícil de notar que responderle una vez a alguien
+ * de la lista. El riesgo real que motiva la exclusión es el saliente (recordatorios), y ese va por
+ * SQL: si la base no responde, no sale ningún recordatorio. Se registra con nivel warn para que la
+ * intermitencia sea visible.
+ */
+export async function estaExcluido(waId: string): Promise<boolean> {
+  const pool = getPool();
+  if (!pool || !waId) return false;
+  try {
+    const r = await pool.query(
+      `SELECT 1
+         FROM person_identity i
+         JOIN person p ON p.id = i.person_id
+        WHERE i.tipo = 'wa_id' AND i.valor_lookup = $1 AND p.excluido_at IS NOT NULL
+        LIMIT 1`,
+      [waId],
+    );
+    return (r.rowCount ?? 0) > 0;
+  } catch (e) {
+    log.warn('personas: estaExcluido falló, se atiende por defecto', { err: String(e) });
+    return false;
+  }
+}
+
 export type RegistroNuevo = {
   waId: string;
   nombre: string;
